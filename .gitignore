@@ -1,0 +1,23 @@
+# Python virtual environment
+venv/
+env/
+ENV/
+.venv/
+
+# Environment configuration
+.env
+
+# Generated reports & logs
+jobs_report.html
+*.log
+
+# Byte-compiled / optimized files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# IDE and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

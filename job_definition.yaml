@@ -1,0 +1,36 @@
+# Job Search Configuration
+
+# List of Job Titles / Roles (Supports English, Hebrew, Ukrainian, Polish, etc.)
+jobs:
+  - "Senior QA Automation Engineer"
+  - "QA Automation Lead"
+  - "מהנדס אוטומציה"
+  - "Інженер з автоматизації QA"
+  - "Inżynier Testów Oprogramowania"
+
+# List of Locations / Countries / Cities to scan
+locations:
+  - "Israel"
+  - "Poland"
+
+# Lookback time window in hours (24 = last 24 hours)
+hours_old: 24
+
+# Number of results per search (e.g. 50)
+results_wanted: 50
+
+
+# Required skills, key terms & preferences
+keywords:
+  - "Python"
+  - "Playwright"
+  - "Selenium"
+  - "CI/CD"
+  - "API testing"
+  - "Remote or Hybrid (Center/Tel Aviv)"
+
+# Exclusion criteria
+exclude:
+  - "Pure manual QA"
+  - "Unpaid internship"
+  - "100% on-site outside central district"

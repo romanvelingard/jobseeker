@@ -1,0 +1,8 @@
+python-jobspy>=1.1.55
+google-genai>=0.1.1
+requests>=2.31.0
+pandas>=2.0.0
+python-dotenv>=1.0.0
+pyyaml>=6.0
+
+
