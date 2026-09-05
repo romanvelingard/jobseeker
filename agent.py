@@ -24,7 +24,7 @@ load_dotenv()
 # ==========================================
 # 1. LOAD CONFIGURATION FILES & HISTORY
 # ==========================================
-JOB_DEF_FILE = "job_definition.yaml"
+JOB_DEF_FILE = "job_definition _Stasia.yaml" if os.path.exists("job_definition _Stasia.yaml") else "job_definition.yaml"
 SETTINGS_FILE = "settings.yaml"
 SEEN_JOBS_FILE = "seen_jobs.json"
 
@@ -371,8 +371,7 @@ def send_email_report(subject: str, html_body: str) -> bool:
     use_tls_val = os.getenv("SMTP_USE_TLS") or str(EMAIL_CFG.get("use_tls", True))
     use_tls = str(use_tls_val).lower() in ("true", "1", "yes")
 
-    if not all([smtp_server, smtp_username, smtp_password, email_to]):
-
+    if not smtp_server or not smtp_username or not smtp_password or not email_to:
         print("[Email] SMTP configuration incomplete. Skipping email send.", flush=True)
         print("[Email] Set SMTP_SERVER, SMTP_USERNAME, SMTP_PASSWORD, EMAIL_TO in your .env file to enable email dispatch.", flush=True)
         return False
