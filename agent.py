@@ -18,46 +18,58 @@ if sys.stderr and hasattr(sys.stderr, "reconfigure"):
 # Load environment variables from .env file if available
 load_dotenv()
 
-
 # ==========================================
-# 1. LOAD CONFIGURATION FROM YAML & ENV
+# 1. LOAD CONFIGURATION FILES
 # ==========================================
-CONFIG_FILE = "job_definition.yaml"
+JOB_DEF_FILE = "job_definition.yaml"
+SETTINGS_FILE = "settings.yaml"
 
-def load_job_config():
-    """Loads configuration from job_definition.yaml with fallback defaults."""
-    config = {
-        "jobs": ["Senior QA Automation Engineer"],
-        "locations": ["Israel"],
-        "hours_old": 24,
-        "results_wanted": 0,
-        "keywords": ["Python", "Playwright", "Selenium", "CI/CD", "API testing"],
-        "exclude": ["Pure manual QA", "Unpaid internship"]
-    }
-    if os.path.exists(CONFIG_FILE):
+def load_yaml_file(filepath: str, default_dict: dict) -> dict:
+    """Helper to load a YAML file with a fallback dictionary."""
+    data = default_dict.copy()
+    if os.path.exists(filepath):
         try:
-            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-                yaml_cfg = yaml.safe_load(f)
-                if isinstance(yaml_cfg, dict):
-                    config.update(yaml_cfg)
-            print(f"[+] Loaded job definitions from {CONFIG_FILE}")
+            with open(filepath, "r", encoding="utf-8") as f:
+                loaded = yaml.safe_load(f)
+                if isinstance(loaded, dict):
+                    data.update(loaded)
+            print(f"[+] Loaded configuration from {filepath}", flush=True)
         except Exception as e:
-            print(f"[!] Error reading {CONFIG_FILE}: {e}")
-    
-    return config
+            print(f"[!] Error reading {filepath}: {e}", flush=True)
+    else:
+        print(f"[!] Warning: Configuration file {filepath} not found. Using defaults.", flush=True)
+    return data
 
-JOB_CONFIG = load_job_config()
+# Load Job Definition Criteria
+JOB_CONFIG = load_yaml_file(JOB_DEF_FILE, {
+    "jobs": ["Senior QA Automation Engineer"],
+    "locations": ["Israel"],
+    "keywords": ["Python", "Playwright", "Selenium", "CI/CD", "API testing"],
+    "exclude": ["Pure manual QA", "Unpaid internship"]
+})
 
+# Load Operational & Application Settings
+APP_SETTINGS = load_yaml_file(SETTINGS_FILE, {
+    "scraper": {"sites": ["linkedin"], "hours_old": 24, "results_wanted": 50},
+    "email": {"smtp_server": "smtp.gmail.com", "smtp_port": 587, "use_tls": True, "email_to": "", "email_from": ""},
+    "llm": {"model": "gemini-2.5-flash", "enabled": True},
+    "reports": {"save_local_html": True, "local_filename": "jobs_report.html"}
+})
+
+# Extract Job Criteria
 JOBS_LIST = JOB_CONFIG.get("jobs") or ["Senior QA Automation Engineer"]
 LOCATIONS_LIST = JOB_CONFIG.get("locations") or ["Israel"]
-HOURS_OLD = int(JOB_CONFIG.get("hours_old") or 24)
-
-# Support unlimited/max results (if 0, None, or omitted, default to 50 per search query to prevent LinkedIn rate limits)
-raw_results_wanted = JOB_CONFIG.get("results_wanted")
-RESULTS_WANTED = 50 if (raw_results_wanted is None or raw_results_wanted == 0) else int(raw_results_wanted)
-
 KEYWORDS_LIST = JOB_CONFIG.get("keywords") or []
 EXCLUDE_LIST = JOB_CONFIG.get("exclude") or []
+
+# Extract Operational Settings (Env variables take precedence)
+SCRAPER_CFG = APP_SETTINGS.get("scraper", {})
+HOURS_OLD = int(os.getenv("HOURS_OLD", SCRAPER_CFG.get("hours_old", 24)))
+RESULTS_WANTED = int(os.getenv("RESULTS_WANTED", SCRAPER_CFG.get("results_wanted", 50)))
+SCRAPE_SITES = SCRAPER_CFG.get("sites", ["linkedin"])
+
+LLM_CFG = APP_SETTINGS.get("llm", {})
+LLM_MODEL = LLM_CFG.get("model", "gemini-2.5-flash")
 
 # Construct AI profile criteria dynamically from keywords and exclusions
 keywords_formatted = "\n".join([f"- {k}" for k in KEYWORDS_LIST])
@@ -70,11 +82,10 @@ Exclusion Rules:
 {exclude_formatted}
 """
 
-
 def send_telegram_message(bot_token: str, chat_id: str, message: str):
     """Sends notification message to your Telegram channel/DM."""
     if not bot_token or not chat_id:
-        print("[Telegram] Missing token or chat ID. Skipping alert.")
+        print("[Telegram] Missing token or chat ID. Skipping alert.", flush=True)
         return
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
     payload = {
@@ -85,9 +96,9 @@ def send_telegram_message(bot_token: str, chat_id: str, message: str):
     }
     try:
         requests.post(url, json=payload, timeout=15)
-        print("[Telegram] Alert sent successfully.")
+        print("[Telegram] Alert sent successfully.", flush=True)
     except Exception as e:
-        print(f"[Telegram] Error sending message: {e}")
+        print(f"[Telegram] Error sending message: {e}", flush=True)
 
 def evaluate_job(client: genai.Client, job_title: str, company: str, description: str) -> dict:
     """Uses LLM to evaluate fit against keywords/exclude rules and generate a short description."""
@@ -127,7 +138,7 @@ REASON: [1 sentence summarizing why it fits or fails]
 """
     try:
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model=LLM_MODEL,
             contents=prompt
         )
         text = response.text
@@ -150,7 +161,7 @@ REASON: [1 sentence summarizing why it fits or fails]
             "short_description": summary
         }
     except Exception as e:
-        print(f"[LLM] Parsing error: {e}")
+        print(f"[LLM] Parsing error: {e}", flush=True)
         return {
             "match": True,
             "verdict": "MATCH: YES (Evaluation error fallback)",
@@ -236,18 +247,20 @@ def build_html_report(matched_jobs: list) -> str:
     return html
 
 def send_email_report(subject: str, html_body: str) -> bool:
-    """Sends HTML email report via SMTP."""
-    smtp_server = os.getenv("SMTP_SERVER")
-    smtp_port = int(os.getenv("SMTP_PORT", "587"))
+    """Sends HTML email report via SMTP using settings.yaml defaults & env variable overrides."""
+    EMAIL_CFG = APP_SETTINGS.get("email", {})
+    smtp_server = os.getenv("SMTP_SERVER", EMAIL_CFG.get("smtp_server", "smtp.gmail.com"))
+    smtp_port = int(os.getenv("SMTP_PORT", EMAIL_CFG.get("smtp_port", 587)))
     smtp_username = os.getenv("SMTP_USERNAME")
     smtp_password = os.getenv("SMTP_PASSWORD")
-    email_to = os.getenv("EMAIL_TO")
-    email_from = os.getenv("EMAIL_FROM", smtp_username)
-    use_tls = os.getenv("SMTP_USE_TLS", "true").lower() in ("true", "1", "yes")
+    email_to = os.getenv("EMAIL_TO", EMAIL_CFG.get("email_to", ""))
+    email_from = os.getenv("EMAIL_FROM", EMAIL_CFG.get("email_from", smtp_username))
+    use_tls_val = os.getenv("SMTP_USE_TLS", str(EMAIL_CFG.get("use_tls", True)))
+    use_tls = str(use_tls_val).lower() in ("true", "1", "yes")
 
     if not all([smtp_server, smtp_username, smtp_password, email_to]):
-        print("[Email] SMTP configuration incomplete. Skipping email send.")
-        print("[Email] Set SMTP_SERVER, SMTP_USERNAME, SMTP_PASSWORD, EMAIL_TO in your .env file to enable email dispatch.")
+        print("[Email] SMTP configuration incomplete. Skipping email send.", flush=True)
+        print("[Email] Set SMTP_SERVER, SMTP_USERNAME, SMTP_PASSWORD, EMAIL_TO in your .env file to enable email dispatch.", flush=True)
         return False
 
     msg = MIMEMultipart("alternative")
@@ -256,21 +269,21 @@ def send_email_report(subject: str, html_body: str) -> bool:
     msg["To"] = email_to
 
     # Attach HTML part
-    part_html = MIMEText(html_body, "utf-8")
+    part_html = MIMEText(html_body, "html", "utf-8")
     msg.attach(part_html)
 
     try:
-        print(f"[*] Connecting to SMTP server {smtp_server}:{smtp_port}...")
+        print(f"[*] Connecting to SMTP server {smtp_server}:{smtp_port}...", flush=True)
         server = smtplib.SMTP(smtp_server, smtp_port, timeout=30)
         if use_tls:
             server.starttls()
         server.login(smtp_username, smtp_password)
         server.sendmail(email_from, [email_to], msg.as_string())
         server.quit()
-        print(f"[+] Email report sent successfully to {email_to}!")
+        print(f"[+] Email report sent successfully to {email_to}!", flush=True)
         return True
     except Exception as e:
-        print(f"[!] Failed to send email: {e}")
+        print(f"[!] Failed to send email: {e}", flush=True)
         return False
 
 def main():
@@ -282,7 +295,7 @@ def main():
     if gemini_api_key:
         client = genai.Client(api_key=gemini_api_key)
     else:
-        print("[!] GEMINI_API_KEY not set. Job evaluation will run in fallback mode without LLM filtering.")
+        print("[!] GEMINI_API_KEY not set. Job evaluation will run in fallback mode without LLM filtering.", flush=True)
 
     matched_jobs = []
     seen_urls = set()
@@ -290,10 +303,10 @@ def main():
 
     for search_term in JOBS_LIST:
         for loc in LOCATIONS_LIST:
-            print(f"[*] Scanning LinkedIn for '{search_term}' in '{loc}' (wanted: {RESULTS_WANTED}, hours_old: {HOURS_OLD})...", flush=True)
+            print(f"[*] Scanning {SCRAPE_SITES} for '{search_term}' in '{loc}' (wanted: {RESULTS_WANTED}, hours_old: {HOURS_OLD})...", flush=True)
             try:
                 jobs = scrape_jobs(
-                    site_name=["linkedin"],
+                    site_name=SCRAPE_SITES,
                     search_term=search_term,
                     location=loc,
                     results_wanted=RESULTS_WANTED,
@@ -337,16 +350,19 @@ def main():
                     })
                     item_id += 1
 
-    print(f"[+] Total unique matched vacancies: {len(matched_jobs)}")
+    print(f"[+] Total unique matched vacancies: {len(matched_jobs)}", flush=True)
 
     # 1. Build HTML Report
     html_report = build_html_report(matched_jobs)
 
-    # 2. Save HTML report locally for inspection / offline testing
-    report_filepath = os.path.abspath("jobs_report.html")
-    with open(report_filepath, "w", encoding="utf-8") as f:
-        f.write(html_report)
-    print(f"[+] Local HTML report saved to: file:///{report_filepath.replace('\\', '/')}")
+    # 2. Save HTML report locally if configured
+    REPORTS_CFG = APP_SETTINGS.get("reports", {})
+    if REPORTS_CFG.get("save_local_html", True):
+        filename = REPORTS_CFG.get("local_filename", "jobs_report.html")
+        report_filepath = os.path.abspath(filename)
+        with open(report_filepath, "w", encoding="utf-8") as f:
+            f.write(html_report)
+        print(f"[+] Local HTML report saved to: file:///{report_filepath.replace('\\', '/')}", flush=True)
 
     # 3. Send Email
     jobs_summary = ", ".join(JOBS_LIST)
@@ -360,7 +376,7 @@ def main():
 
     # 4. Optional Telegram Notification
     if tg_token and tg_chat_id and matched_jobs:
-        print("[*] Sending Telegram notifications...")
+        print("[*] Sending Telegram notifications...", flush=True)
         for match in matched_jobs:
             msg = (
                 f"🎯 *New Job Match #{match['id']}!*\n\n"
@@ -373,6 +389,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 

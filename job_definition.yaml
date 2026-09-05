@@ -1,4 +1,4 @@
-# Job Search Configuration
+# Job Definitions & Search Criteria
 
 # List of Job Titles / Roles (Supports English, Hebrew, Ukrainian, Polish, etc.)
 jobs:
@@ -12,13 +12,6 @@ jobs:
 locations:
   - "Israel"
   - "Poland"
-
-# Lookback time window in hours (24 = last 24 hours)
-hours_old: 24
-
-# Number of results per search (e.g. 50)
-results_wanted: 50
-
 
 # Required skills, key terms & preferences
 keywords:

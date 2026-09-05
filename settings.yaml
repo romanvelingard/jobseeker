@@ -1,0 +1,23 @@
+# Application & Operational Settings
+
+scraper:
+  sites:
+    - "linkedin"
+  hours_old: 24
+  results_wanted: 50
+
+email:
+  smtp_server: "smtp.gmail.com"
+  smtp_port: 587
+  use_tls: true
+  # Set email recipient or load from EMAIL_TO environment variable
+  email_to: ""
+  email_from: ""
+
+llm:
+  model: "gemini-2.5-flash"
+  enabled: true
+
+reports:
+  save_local_html: true
+  local_filename: "jobs_report.html"
