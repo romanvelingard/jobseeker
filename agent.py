@@ -102,17 +102,17 @@ def send_telegram_message(bot_token: str, chat_id: str, message: str):
 
 def evaluate_job(client: genai.Client, job_title: str, company: str, description: str) -> dict:
     """Uses LLM to evaluate fit against keywords/exclude rules and generate a short description."""
-    if not client:
-        # Fallback keyword filter if no Gemini API key provided
-        desc_lower = description.lower()
-        title_lower = job_title.lower()
-        
-        # Check exclusion rules
-        for ex in EXCLUDE_LIST:
-            if ex.lower() in desc_lower or ex.lower() in title_lower:
-                return {"match": False, "verdict": f"Excluded due to keyword: {ex}", "short_description": ""}
+    desc_lower = description.lower()
+    title_lower = job_title.lower()
+    
+    # 1. Pre-filter local exclusion rules to save API quota
+    for ex in EXCLUDE_LIST:
+        if ex.lower() in desc_lower or ex.lower() in title_lower:
+            return {"match": False, "verdict": f"Excluded due to keyword: {ex}", "short_description": ""}
 
-        summary_snip = description[:180].strip().replace("\n", " ") + "..." if len(description) > 180 else description
+    summary_snip = description[:180].strip().replace("\n", " ") + "..." if len(description) > 180 else description
+
+    if not client:
         return {
             "match": True,
             "verdict": "MATCH: YES\nREASON: Scraped job matches criteria (LLM evaluation skipped).",
@@ -153,7 +153,7 @@ REASON: [1 sentence summarizing why it fits or fails]
                 summary = line.replace("REASON:", "").strip()
 
         if not summary:
-            summary = description[:180].strip().replace("\n", " ") + "..." if len(description) > 180 else description
+            summary = summary_snip
 
         return {
             "match": is_match,
@@ -161,15 +161,16 @@ REASON: [1 sentence summarizing why it fits or fails]
             "short_description": summary
         }
     except Exception as e:
-        print(f"[LLM] Parsing error: {e}", flush=True)
+        print(f"[LLM] Notice: Using fallback summary (API limit/notice: {str(e)[:80]}...)", flush=True)
         return {
             "match": True,
-            "verdict": "MATCH: YES (Evaluation error fallback)",
-            "short_description": description[:180].strip().replace("\n", " ") + "..." if len(description) > 180 else description
+            "verdict": "MATCH: YES (Fallback)",
+            "short_description": summary_snip
         }
 
+
 def build_html_report(matched_jobs: list) -> str:
-    """Generates an HTML report containing a table with schema: ID, Position Name, Company, Location, Country, Short Description, Link."""
+    """Generates an HTML report containing a responsive table: ID, Position Name, Company, Location, Country, Short Description, Link."""
     table_rows = []
     for job in matched_jobs:
         job_id = job.get("id", "")
@@ -180,17 +181,17 @@ def build_html_report(matched_jobs: list) -> str:
         desc = job.get("short_description", "")
         url = job.get("url", "#")
         
-        link_html = f'<a href="{url}" target="_blank" style="color: #2563eb; text-decoration: none; font-weight: bold;">View Job</a>' if url and url != "#" else 'N/A'
+        link_html = f'<a href="{url}" target="_blank" style="color: #2563eb; text-decoration: none; font-weight: bold; display: inline-block;">View Job</a>' if url and url != "#" else 'N/A'
         
         row_html = f"""
         <tr style="border-bottom: 1px solid #e5e7eb;">
-            <td style="padding: 12px 15px; text-align: center; font-weight: bold; color: #4b5563;">{job_id}</td>
-            <td style="padding: 12px 15px; font-weight: 600; color: #111827;">{title}</td>
-            <td style="padding: 12px 15px; color: #374151;">{company}</td>
-            <td style="padding: 12px 15px; color: #6b7280; font-size: 13px;">{location}</td>
-            <td style="padding: 12px 15px; color: #4b5563; font-size: 13px; font-weight: 500;">{country}</td>
-            <td style="padding: 12px 15px; color: #4b5563; font-size: 13px; max-width: 300px;">{desc}</td>
-            <td style="padding: 12px 15px; text-align: center;">{link_html}</td>
+            <td style="padding: 10px; text-align: center; font-weight: bold; color: #4b5563; word-break: break-word;">{job_id}</td>
+            <td style="padding: 10px; font-weight: 600; color: #111827; word-break: break-word;">{title}</td>
+            <td style="padding: 10px; color: #374151; word-break: break-word;">{company}</td>
+            <td style="padding: 10px; color: #6b7280; font-size: 13px; word-break: break-word;">{location}</td>
+            <td style="padding: 10px; color: #4b5563; font-size: 13px; font-weight: 500; word-break: break-word;">{country}</td>
+            <td style="padding: 10px; color: #4b5563; font-size: 13px; word-break: break-word; line-height: 1.4;">{desc}</td>
+            <td style="padding: 10px; text-align: center; word-break: break-word;">{link_html}</td>
         </tr>
         """
         table_rows.append(row_html)
@@ -209,26 +210,27 @@ def build_html_report(matched_jobs: list) -> str:
     <html>
     <head>
         <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Daily Job Vacancies Report</title>
     </head>
-    <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f9fafb; margin: 0; padding: 20px;">
-        <div style="max-width: 980px; margin: 0 auto; background: #ffffff; border-radius: 8px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); overflow: hidden; border: 1px solid #e5e7eb;">
-            <div style="background: linear-gradient(135deg, #1e3a8a 0%, #2563eb 100%); color: #ffffff; padding: 24px; text-align: center;">
-                <h1 style="margin: 0; font-size: 22px; font-weight: 700;">🎯 Daily Job Vacancies Report</h1>
-                <p style="margin: 6px 0 0 0; font-size: 14px; opacity: 0.9;">Found {len(matched_jobs)} matching positions for <strong>{jobs_str}</strong> in <strong>{locations_str}</strong></p>
+    <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f9fafb; margin: 0; padding: 10px;">
+        <div style="width: 100%; max-width: 1000px; margin: 0 auto; background: #ffffff; border-radius: 8px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); border: 1px solid #e5e7eb; box-sizing: border-box;">
+            <div style="background: linear-gradient(135deg, #1e3a8a 0%, #2563eb 100%); color: #ffffff; padding: 20px; text-align: center; border-top-left-radius: 8px; border-top-right-radius: 8px;">
+                <h1 style="margin: 0; font-size: 20px; font-weight: 700;">🎯 Daily Job Vacancies Report</h1>
+                <p style="margin: 6px 0 0 0; font-size: 13px; opacity: 0.9;">Found {len(matched_jobs)} matching positions for <strong>{jobs_str}</strong> in <strong>{locations_str}</strong></p>
             </div>
             
-            <div style="padding: 20px; overflow-x: auto;">
-                <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 14px;">
+            <div style="padding: 10px; overflow-x: auto; width: 100%; box-sizing: border-box;">
+                <table style="width: 100%; table-layout: fixed; border-collapse: collapse; text-align: left; font-size: 13px;">
                     <thead>
-                        <tr style="background-color: #f3f4f6; color: #374151; font-weight: 600; text-transform: uppercase; font-size: 12px; letter-spacing: 0.05em;">
-                            <th style="padding: 12px 15px; border-bottom: 2px solid #e5e7eb; width: 40px; text-align: center;">ID</th>
-                            <th style="padding: 12px 15px; border-bottom: 2px solid #e5e7eb;">Position Name</th>
-                            <th style="padding: 12px 15px; border-bottom: 2px solid #e5e7eb;">Company</th>
-                            <th style="padding: 12px 15px; border-bottom: 2px solid #e5e7eb;">Location</th>
-                            <th style="padding: 12px 15px; border-bottom: 2px solid #e5e7eb;">Country</th>
-                            <th style="padding: 12px 15px; border-bottom: 2px solid #e5e7eb;">Short Description</th>
-                            <th style="padding: 12px 15px; border-bottom: 2px solid #e5e7eb; text-align: center;">Link</th>
+                        <tr style="background-color: #f3f4f6; color: #374151; font-weight: 600; text-transform: uppercase; font-size: 11px; letter-spacing: 0.05em;">
+                            <th style="padding: 10px; border-bottom: 2px solid #e5e7eb; width: 5%; text-align: center;">ID</th>
+                            <th style="padding: 10px; border-bottom: 2px solid #e5e7eb; width: 22%;">Position Name</th>
+                            <th style="padding: 10px; border-bottom: 2px solid #e5e7eb; width: 15%;">Company</th>
+                            <th style="padding: 10px; border-bottom: 2px solid #e5e7eb; width: 18%;">Location</th>
+                            <th style="padding: 10px; border-bottom: 2px solid #e5e7eb; width: 10%;">Country</th>
+                            <th style="padding: 10px; border-bottom: 2px solid #e5e7eb; width: 20%;">Short Description</th>
+                            <th style="padding: 10px; border-bottom: 2px solid #e5e7eb; width: 10%; text-align: center;">Link</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -237,7 +239,7 @@ def build_html_report(matched_jobs: list) -> str:
                 </table>
             </div>
             
-            <div style="background-color: #f9fafb; padding: 15px 24px; border-top: 1px solid #e5e7eb; text-align: center; font-size: 12px; color: #9ca3af;">
+            <div style="background-color: #f9fafb; padding: 12px; border-top: 1px solid #e5e7eb; text-align: center; font-size: 12px; color: #9ca3af; border-bottom-left-radius: 8px; border-bottom-right-radius: 8px;">
                 Automated Job Finder • Running Daily
             </div>
         </div>
@@ -245,6 +247,7 @@ def build_html_report(matched_jobs: list) -> str:
     </html>
     """
     return html
+
 
 def send_email_report(subject: str, html_body: str) -> bool:
     """Sends HTML email report via SMTP using settings.yaml defaults & env variable overrides."""
