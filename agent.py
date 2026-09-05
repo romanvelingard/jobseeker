@@ -252,16 +252,23 @@ def build_html_report(matched_jobs: list) -> str:
 def send_email_report(subject: str, html_body: str) -> bool:
     """Sends HTML email report via SMTP using settings.yaml defaults & env variable overrides."""
     EMAIL_CFG = APP_SETTINGS.get("email", {})
-    smtp_server = os.getenv("SMTP_SERVER", EMAIL_CFG.get("smtp_server", "smtp.gmail.com"))
-    smtp_port = int(os.getenv("SMTP_PORT", EMAIL_CFG.get("smtp_port", 587)))
+    smtp_server = os.getenv("SMTP_SERVER") or EMAIL_CFG.get("smtp_server", "smtp.gmail.com")
+    
+    smtp_port_raw = os.getenv("SMTP_PORT")
+    if smtp_port_raw and str(smtp_port_raw).strip().isdigit():
+        smtp_port = int(str(smtp_port_raw).strip())
+    else:
+        smtp_port = int(EMAIL_CFG.get("smtp_port", 587))
+
     smtp_username = os.getenv("SMTP_USERNAME")
     smtp_password = os.getenv("SMTP_PASSWORD")
-    email_to = os.getenv("EMAIL_TO", EMAIL_CFG.get("email_to", ""))
-    email_from = os.getenv("EMAIL_FROM", EMAIL_CFG.get("email_from", smtp_username))
-    use_tls_val = os.getenv("SMTP_USE_TLS", str(EMAIL_CFG.get("use_tls", True)))
+    email_to = os.getenv("EMAIL_TO") or EMAIL_CFG.get("email_to", "")
+    email_from = os.getenv("EMAIL_FROM") or EMAIL_CFG.get("email_from", smtp_username)
+    use_tls_val = os.getenv("SMTP_USE_TLS") or str(EMAIL_CFG.get("use_tls", True))
     use_tls = str(use_tls_val).lower() in ("true", "1", "yes")
 
     if not all([smtp_server, smtp_username, smtp_password, email_to]):
+
         print("[Email] SMTP configuration incomplete. Skipping email send.", flush=True)
         print("[Email] Set SMTP_SERVER, SMTP_USERNAME, SMTP_PASSWORD, EMAIL_TO in your .env file to enable email dispatch.", flush=True)
         return False
