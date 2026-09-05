@@ -24,7 +24,7 @@ load_dotenv()
 # ==========================================
 # 1. LOAD CONFIGURATION FILES & HISTORY
 # ==========================================
-JOB_DEF_FILE = "job_definition _Stasia.yaml" if os.path.exists("job_definition _Stasia.yaml") else "job_definition.yaml"
+JOB_DEF_FILE = "job_definition.yaml"
 SETTINGS_FILE = "settings.yaml"
 SEEN_JOBS_FILE = "seen_jobs.json"
 
@@ -87,32 +87,32 @@ def load_yaml_file(filepath: str, default_dict: dict) -> dict:
         print(f"[!] Warning: Configuration file {filepath} not found. Using defaults.", flush=True)
     return data
 
-# Load Job Definition Criteria
+# Load Job Definition Criteria from job_definition.yaml
 JOB_CONFIG = load_yaml_file(JOB_DEF_FILE, {
-    "jobs": ["Senior QA Automation Engineer"],
-    "locations": ["Israel"],
-    "keywords": ["Python", "Playwright", "Selenium", "CI/CD", "API testing"],
-    "exclude": ["Pure manual QA", "Unpaid internship"]
+    "jobs": [],
+    "locations": [],
+    "keywords": [],
+    "exclude": []
 })
 
 # Load Operational & Application Settings
 APP_SETTINGS = load_yaml_file(SETTINGS_FILE, {
-    "scraper": {"sites": ["linkedin"], "hours_old": 24, "results_wanted": 30},
+    "scraper": {"sites": ["linkedin"], "hours_old": 24, "results_wanted": 20},
     "email": {"smtp_server": "smtp.gmail.com", "smtp_port": 587, "use_tls": True, "email_to": "", "email_from": ""},
-    "llm": {"model": "gemini-2.5-flash", "enabled": True},
+    "llm": {"model": "gemini-3.6-flash", "enabled": True},
     "reports": {"save_local_html": True, "local_filename": "jobs_report.html"}
 })
 
 # Extract Job Criteria
-JOBS_LIST = JOB_CONFIG.get("jobs") or ["Senior QA Automation Engineer"]
-LOCATIONS_LIST = JOB_CONFIG.get("locations") or ["Israel"]
-KEYWORDS_LIST = JOB_CONFIG.get("keywords") or []
-EXCLUDE_LIST = JOB_CONFIG.get("exclude") or []
+JOBS_LIST = JOB_CONFIG.get("jobs") if JOB_CONFIG.get("jobs") is not None else []
+LOCATIONS_LIST = JOB_CONFIG.get("locations") if JOB_CONFIG.get("locations") is not None else []
+KEYWORDS_LIST = JOB_CONFIG.get("keywords") if JOB_CONFIG.get("keywords") is not None else []
+EXCLUDE_LIST = JOB_CONFIG.get("exclude") if JOB_CONFIG.get("exclude") is not None else []
 
 # Extract Operational Settings (Env variables take precedence)
 SCRAPER_CFG = APP_SETTINGS.get("scraper", {})
 HOURS_OLD = int(os.getenv("HOURS_OLD", SCRAPER_CFG.get("hours_old", 24)))
-RESULTS_WANTED = int(os.getenv("RESULTS_WANTED", SCRAPER_CFG.get("results_wanted", 30)))
+RESULTS_WANTED = int(os.getenv("RESULTS_WANTED", SCRAPER_CFG.get("results_wanted", 20)))
 SCRAPE_SITES = SCRAPER_CFG.get("sites", ["linkedin"])
 
 LLM_CFG = APP_SETTINGS.get("llm", {})
@@ -467,10 +467,6 @@ def main():
 
     print(f"[+] Total new unique matched vacancies today: {len(matched_jobs)}", flush=True)
 
-    # For debugging/testing, cap report to top 10 matched jobs
-    if len(matched_jobs) > 10:
-        print(f"[*] Capping report to top 10 matches for debug testing (out of {len(matched_jobs)} total).", flush=True)
-        matched_jobs = matched_jobs[:10]
 
     # Mark ONLY the jobs being sent in today's report as seen in seen_jobs.json
     now_str = datetime.now(timezone.utc).isoformat()

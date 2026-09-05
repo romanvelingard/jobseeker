@@ -4,7 +4,7 @@ scraper:
   sites:
     - "linkedin"
   hours_old: 24
-  results_wanted: 30
+  results_wanted: 20
 
 
 email:
