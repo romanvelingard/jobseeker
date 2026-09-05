@@ -11,8 +11,8 @@ email:
   smtp_port: 587
   use_tls: true
   # Set email recipient or load from EMAIL_TO environment variable
-  email_to: ""
-  email_from: ""
+  email_to: "rommy_rommy@yahoo.com"
+  email_from: "roman.vel@gmail.com"
 
 llm:
   model: "gemini-2.5-flash"
