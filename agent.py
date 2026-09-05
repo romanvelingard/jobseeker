@@ -1,6 +1,7 @@
 import sys
 import os
 import json
+import re
 import smtplib
 from datetime import datetime, timezone, timedelta
 from email.mime.multipart import MIMEMultipart
@@ -115,7 +116,7 @@ RESULTS_WANTED = int(os.getenv("RESULTS_WANTED", SCRAPER_CFG.get("results_wanted
 SCRAPE_SITES = SCRAPER_CFG.get("sites", ["linkedin"])
 
 LLM_CFG = APP_SETTINGS.get("llm", {})
-LLM_MODEL = LLM_CFG.get("model", "gemini-2.5-flash")
+LLM_MODEL = LLM_CFG.get("model", "gemini-3.6-flash")
 
 # Construct AI profile criteria dynamically from keywords and exclusions
 keywords_formatted = "\n".join([f"- {k}" for k in KEYWORDS_LIST])
@@ -146,8 +147,41 @@ def send_telegram_message(bot_token: str, chat_id: str, message: str):
     except Exception as e:
         print(f"[Telegram] Error sending message: {e}", flush=True)
 
+def extract_skills_summary(description: str, job_title: str) -> str:
+    """Extracts key technical skills and requirements from description for report summary."""
+    if not description or len(description.strip()) == 0:
+        return f"Role: {job_title}"
+    
+    desc_clean = description.replace("\n", " ").strip()
+    
+    # Detect matching skills from target keywords and common software/QA stack
+    found_skills = []
+    all_tech = KEYWORDS_LIST + [
+        "Python", "Playwright", "Selenium", "C#", "Java", "TypeScript", "JavaScript",
+        "Appium", "PyTest", "JUnit", "TestNG", "CI/CD", "Jenkins", "GitLab", "GitHub Actions",
+        "Docker", "Kubernetes", "REST API", "Postman", "SQL", "AWS", "Azure", "Agile", "Scrum",
+        "BDD", "Cucumber", "API Testing", "Automation"
+    ]
+    seen_lower = set()
+    for tech in all_tech:
+        t_lower = tech.lower()
+        if t_lower not in seen_lower and re.search(r'\b' + re.escape(tech) + r'\b', description, re.IGNORECASE):
+            found_skills.append(tech)
+            seen_lower.add(t_lower)
+
+    skills_summary = f"Skills: {', '.join(found_skills[:6])}" if found_skills else "QA & Automation"
+    
+    # Find an informative sentence from description
+    sentences = [s.strip() for s in re.split(r'[.!?]', desc_clean) if len(s.strip()) > 20]
+    info_sentence = sentences[0] if sentences else desc_clean[:120]
+    if len(info_sentence) > 140:
+        info_sentence = info_sentence[:140] + "..."
+
+    return f"<strong>{skills_summary}</strong> — {info_sentence}"
+
+
 def evaluate_job(client: genai.Client, job_title: str, company: str, description: str) -> dict:
-    """Uses LLM to evaluate fit against keywords/exclude rules and generate a short description."""
+    """Uses LLM to evaluate fit against keywords/exclude rules and generate a skills & role summary."""
     desc_lower = description.lower()
     title_lower = job_title.lower()
     
@@ -156,13 +190,13 @@ def evaluate_job(client: genai.Client, job_title: str, company: str, description
         if ex.lower() in desc_lower or ex.lower() in title_lower:
             return {"match": False, "verdict": f"Excluded due to keyword: {ex}", "short_description": ""}
 
-    summary_snip = description[:180].strip().replace("\n", " ") + "..." if len(description) > 180 else description
+    fallback_summary = extract_skills_summary(description, job_title)
 
     if not client:
         return {
             "match": True,
             "verdict": "MATCH: YES\nREASON: Scraped job matches criteria (LLM evaluation skipped).",
-            "short_description": summary_snip
+            "short_description": fallback_summary
         }
 
     prompt = f"""
@@ -174,12 +208,12 @@ User Criteria & Exclusions:
 Job Details:
 Title: {job_title}
 Company: {company}
-Description snippet: {description[:2000]}
+Description: {description[:2500]}
 
 Respond ONLY in this format:
 MATCH: [YES / NO]
 SCORE: [0-100]%
-SUMMARY: [1-2 sentences concise summary of the position and key requirements]
+SUMMARY: [Summarize key technical skills, stack, and 1 concise sentence describing the role. Do NOT copy-paste raw text.]
 REASON: [1 sentence summarizing why it fits or fails]
 """
     try:
@@ -199,7 +233,7 @@ REASON: [1 sentence summarizing why it fits or fails]
                 summary = line.replace("REASON:", "").strip()
 
         if not summary:
-            summary = summary_snip
+            summary = fallback_summary
 
         return {
             "match": is_match,
@@ -211,7 +245,7 @@ REASON: [1 sentence summarizing why it fits or fails]
         return {
             "match": True,
             "verdict": "MATCH: YES (Fallback)",
-            "short_description": summary_snip
+            "short_description": fallback_summary
         }
 
 
@@ -271,12 +305,12 @@ def build_html_report(matched_jobs: list) -> str:
                     <thead>
                         <tr style="background-color: #f3f4f6; color: #374151; font-weight: 600; text-transform: uppercase; font-size: 11px; letter-spacing: 0.05em;">
                             <th style="padding: 10px; border-bottom: 2px solid #e5e7eb; width: 5%; text-align: center;">ID</th>
-                            <th style="padding: 10px; border-bottom: 2px solid #e5e7eb; width: 22%;">Position Name</th>
-                            <th style="padding: 10px; border-bottom: 2px solid #e5e7eb; width: 15%;">Company</th>
-                            <th style="padding: 10px; border-bottom: 2px solid #e5e7eb; width: 18%;">Location</th>
-                            <th style="padding: 10px; border-bottom: 2px solid #e5e7eb; width: 10%;">Country</th>
-                            <th style="padding: 10px; border-bottom: 2px solid #e5e7eb; width: 20%;">Short Description</th>
-                            <th style="padding: 10px; border-bottom: 2px solid #e5e7eb; width: 10%; text-align: center;">Link</th>
+                            <th style="padding: 10px; border-bottom: 2px solid #e5e7eb; width: 20%;">Position Name</th>
+                            <th style="padding: 10px; border-bottom: 2px solid #e5e7eb; width: 14%;">Company</th>
+                            <th style="padding: 10px; border-bottom: 2px solid #e5e7eb; width: 13%;">Location</th>
+                            <th style="padding: 10px; border-bottom: 2px solid #e5e7eb; width: 8%;">Country</th>
+                            <th style="padding: 10px; border-bottom: 2px solid #e5e7eb; width: 32%;">Skills & Summary</th>
+                            <th style="padding: 10px; border-bottom: 2px solid #e5e7eb; width: 8%; text-align: center;">Link</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -388,9 +422,6 @@ def main():
                 job_url = str(row.get("job_url", "")).strip()
                 if job_url and job_url in seen_urls:
                     continue
-                if job_url:
-                    seen_urls.add(job_url)
-                    seen_map[job_url] = datetime.now(timezone.utc).isoformat()
 
                 title = str(row.get("title", "Unknown Title"))
                 company = str(row.get("company", "Unknown Company"))
@@ -413,14 +444,21 @@ def main():
 
     print(f"[+] Total new unique matched vacancies today: {len(matched_jobs)}", flush=True)
 
-    # Save updated seen_map history
-    save_seen_jobs(seen_map)
-
-
     # For debugging/testing, cap report to top 10 matched jobs
     if len(matched_jobs) > 10:
         print(f"[*] Capping report to top 10 matches for debug testing (out of {len(matched_jobs)} total).", flush=True)
         matched_jobs = matched_jobs[:10]
+
+    # Mark ONLY the jobs being sent in today's report as seen in seen_jobs.json
+    now_str = datetime.now(timezone.utc).isoformat()
+    for job in matched_jobs:
+        u = job.get("url")
+        if u:
+            seen_urls.add(u)
+            seen_map[u] = now_str
+
+    # Save updated seen_map history
+    save_seen_jobs(seen_map)
 
     # 1. Build HTML Report
     html_report = build_html_report(matched_jobs)
