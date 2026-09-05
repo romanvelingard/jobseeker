@@ -192,6 +192,31 @@ def extract_skills_summary(description: str, job_title: str) -> str:
         return f"<strong>Role Overview:</strong> {info_sentence}"
 
 
+def get_job_priority(job: dict) -> tuple[int, int]:
+    """Returns priority sorting tuple (rank, original_id):
+    Rank 1: Purchasing / Buyer / Procurement roles in Israel
+    Rank 2: Purchasing / Buyer / Procurement roles in Poland
+    Rank 3: Purchasing / Buyer / Procurement roles in Ukraine
+    Rank 4: All other matched roles
+    """
+    title = job.get("title", "").lower()
+    country = job.get("country", "").lower()
+
+    buyer_keywords = ["buyer", "purchasing", "procurement", "sourcing", "קניין", "רכש", "zakupów", "kupiec", "закупівель", "постачання"]
+    is_buyer_role = any(kw in title for kw in buyer_keywords)
+
+    if is_buyer_role and "israel" in country:
+        rank = 1
+    elif is_buyer_role and "poland" in country:
+        rank = 2
+    elif is_buyer_role and "ukraine" in country:
+        rank = 3
+    else:
+        rank = 4
+
+    return (rank, job.get("id", 0))
+
+
 def evaluate_job(client: genai.Client, job_title: str, company: str, description: str) -> dict:
     """Uses Gemini AI to evaluate fit and dynamically extract key skills & role summary for ANY job posting."""
     desc_lower = description.lower()
@@ -467,6 +492,21 @@ def main():
 
     print(f"[+] Total new unique matched vacancies today: {len(matched_jobs)}", flush=True)
 
+    # 1. Sort matched jobs by user priority:
+    #    Priority 1: Purchasing/Buyer in Israel
+    #    Priority 2: Purchasing/Buyer in Poland
+    #    Priority 3: Purchasing/Buyer in Ukraine
+    #    Priority 4: All other matched vacancies
+    matched_jobs.sort(key=get_job_priority)
+
+    # 2. Cap total report positions to top 30 based on priority ranking
+    if len(matched_jobs) > 30:
+        print(f"[*] Prioritizing and capping report to top 30 positions total (out of {len(matched_jobs)} total matches).", flush=True)
+        matched_jobs = matched_jobs[:30]
+
+    # 3. Re-index IDs sequentially for the final report (1..N)
+    for idx, job in enumerate(matched_jobs, 1):
+        job["id"] = idx
 
     # Mark ONLY the jobs being sent in today's report as seen in seen_jobs.json
     now_str = datetime.now(timezone.utc).isoformat()
