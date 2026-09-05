@@ -97,7 +97,7 @@ JOB_CONFIG = load_yaml_file(JOB_DEF_FILE, {
 
 # Load Operational & Application Settings
 APP_SETTINGS = load_yaml_file(SETTINGS_FILE, {
-    "scraper": {"sites": ["linkedin"], "hours_old": 24, "results_wanted": 50},
+    "scraper": {"sites": ["linkedin"], "hours_old": 24, "results_wanted": 30},
     "email": {"smtp_server": "smtp.gmail.com", "smtp_port": 587, "use_tls": True, "email_to": "", "email_from": ""},
     "llm": {"model": "gemini-2.5-flash", "enabled": True},
     "reports": {"save_local_html": True, "local_filename": "jobs_report.html"}
@@ -112,7 +112,7 @@ EXCLUDE_LIST = JOB_CONFIG.get("exclude") or []
 # Extract Operational Settings (Env variables take precedence)
 SCRAPER_CFG = APP_SETTINGS.get("scraper", {})
 HOURS_OLD = int(os.getenv("HOURS_OLD", SCRAPER_CFG.get("hours_old", 24)))
-RESULTS_WANTED = int(os.getenv("RESULTS_WANTED", SCRAPER_CFG.get("results_wanted", 50)))
+RESULTS_WANTED = int(os.getenv("RESULTS_WANTED", SCRAPER_CFG.get("results_wanted", 30)))
 SCRAPE_SITES = SCRAPER_CFG.get("sites", ["linkedin"])
 
 LLM_CFG = APP_SETTINGS.get("llm", {})
