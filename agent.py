@@ -148,40 +148,52 @@ def send_telegram_message(bot_token: str, chat_id: str, message: str):
         print(f"[Telegram] Error sending message: {e}", flush=True)
 
 def extract_skills_summary(description: str, job_title: str) -> str:
-    """Extracts key technical skills and requirements from description for report summary."""
+    """Extracts key skills and responsibilities dynamically for ANY job domain (software, data, product, sales, marketing, operations, etc.)."""
     if not description or len(description.strip()) == 0:
-        return f"Role: {job_title}"
+        return f"Position: {job_title}"
     
     desc_clean = description.replace("\n", " ").strip()
     
-    # Detect matching skills from target keywords and common software/QA stack
+    # 1. Dynamically extract matched keywords from job_definition.yaml
     found_skills = []
-    all_tech = KEYWORDS_LIST + [
-        "Python", "Playwright", "Selenium", "C#", "Java", "TypeScript", "JavaScript",
-        "Appium", "PyTest", "JUnit", "TestNG", "CI/CD", "Jenkins", "GitLab", "GitHub Actions",
-        "Docker", "Kubernetes", "REST API", "Postman", "SQL", "AWS", "Azure", "Agile", "Scrum",
-        "BDD", "Cucumber", "API Testing", "Automation"
-    ]
     seen_lower = set()
-    for tech in all_tech:
-        t_lower = tech.lower()
-        if t_lower not in seen_lower and re.search(r'\b' + re.escape(tech) + r'\b', description, re.IGNORECASE):
-            found_skills.append(tech)
+
+    # Check user-configured keywords first
+    for kw in KEYWORDS_LIST:
+        k_lower = kw.lower()
+        if k_lower not in seen_lower and re.search(r'\b' + re.escape(kw) + r'\b', description, re.IGNORECASE):
+            found_skills.append(kw)
+            seen_lower.add(k_lower)
+
+    # Check common tech & professional tool terms dynamically
+    common_tools = [
+        "Python", "Java", "C++", "C#", "Go", "Rust", "TypeScript", "JavaScript", "React", "Angular", "Vue", "Node.js",
+        "SQL", "PostgreSQL", "MongoDB", "Redis", "Docker", "Kubernetes", "AWS", "Azure", "GCP", "CI/CD", "Jenkins",
+        "Git", "Linux", "REST API", "GraphQL", "Microservices", "System Design", "Agile", "Scrum", "DevOps",
+        "Machine Learning", "AI", "Data Engineering", "ETL", "Security", "Automation", "Testing", "Salesforce",
+        "HubSpot", "Jira", "Confluence", "Figma", "Tableau", "PowerBI", "Excel", "Product Management"
+    ]
+    for tool in common_tools:
+        t_lower = tool.lower()
+        if t_lower not in seen_lower and re.search(r'\b' + re.escape(tool) + r'\b', description, re.IGNORECASE):
+            found_skills.append(tool)
             seen_lower.add(t_lower)
 
-    skills_summary = f"Skills: {', '.join(found_skills[:6])}" if found_skills else "QA & Automation"
-    
-    # Find an informative sentence from description
+    # 2. Extract first informative sentence from description
     sentences = [s.strip() for s in re.split(r'[.!?]', desc_clean) if len(s.strip()) > 20]
-    info_sentence = sentences[0] if sentences else desc_clean[:120]
+    info_sentence = sentences[0] if sentences else desc_clean[:130]
     if len(info_sentence) > 140:
         info_sentence = info_sentence[:140] + "..."
 
-    return f"<strong>{skills_summary}</strong> — {info_sentence}"
+    if found_skills:
+        skills_str = ", ".join(found_skills[:6])
+        return f"<strong>Key Skills: {skills_str}</strong> — {info_sentence}"
+    else:
+        return f"<strong>Role Overview:</strong> {info_sentence}"
 
 
 def evaluate_job(client: genai.Client, job_title: str, company: str, description: str) -> dict:
-    """Uses LLM to evaluate fit against keywords/exclude rules and generate a skills & role summary."""
+    """Uses Gemini AI to evaluate fit and dynamically extract key skills & role summary for ANY job posting."""
     desc_lower = description.lower()
     title_lower = job_title.lower()
     
@@ -200,7 +212,7 @@ def evaluate_job(client: genai.Client, job_title: str, company: str, description
         }
 
     prompt = f"""
-You are an expert career agent. Evaluate this job vacancy against the user profile criteria.
+You are an expert universal career agent. Read and analyze this job posting carefully.
 
 User Criteria & Exclusions:
 {MY_PROFILE_CRITERIA}
@@ -210,10 +222,15 @@ Title: {job_title}
 Company: {company}
 Description: {description[:2500]}
 
+Instructions:
+1. Determine if this job matches the user criteria.
+2. Analyze the job posting text and figure out the key skills, technologies, tools, or domain qualifications required for THIS specific position (regardless of industry or role).
+3. Generate a concise 1-sentence summary of the core role responsibilities.
+
 Respond ONLY in this format:
 MATCH: [YES / NO]
 SCORE: [0-100]%
-SUMMARY: [Summarize key technical skills, stack, and 1 concise sentence describing the role. Do NOT copy-paste raw text.]
+SUMMARY: Key Skills: [3-6 key skills/tools/technologies extracted by AI] — [1 concise sentence describing the role]
 REASON: [1 sentence summarizing why it fits or fails]
 """
     try:
@@ -228,8 +245,15 @@ REASON: [1 sentence summarizing why it fits or fails]
         for line in text.splitlines():
             if line.startswith("SUMMARY:"):
                 summary = line.replace("SUMMARY:", "").strip()
+                # Wrap AI-extracted skills in HTML bold if present
+                if summary.startswith("Key Skills:"):
+                    parts = summary.split(" — ", 1)
+                    if len(parts) == 2:
+                        summary = f"<strong>{parts[0]}</strong> — {parts[1]}"
+                    else:
+                        summary = f"<strong>{summary}</strong>"
                 break
-            elif line.startswith("REASON:"):
+            elif line.startswith("REASON:") and not summary:
                 summary = line.replace("REASON:", "").strip()
 
         if not summary:
