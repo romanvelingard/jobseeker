@@ -23,3 +23,7 @@ llm:
 reports:
   save_local_html: true
   local_filename: "jobs_report.html"
+
+history:
+  ignore_days: 7
+

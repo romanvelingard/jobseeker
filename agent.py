@@ -1,6 +1,8 @@
 import sys
 import os
+import json
 import smtplib
+from datetime import datetime, timezone, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 import requests
@@ -19,10 +21,54 @@ if sys.stderr and hasattr(sys.stderr, "reconfigure"):
 load_dotenv()
 
 # ==========================================
-# 1. LOAD CONFIGURATION FILES
+# 1. LOAD CONFIGURATION FILES & HISTORY
 # ==========================================
 JOB_DEF_FILE = "job_definition.yaml"
 SETTINGS_FILE = "settings.yaml"
+SEEN_JOBS_FILE = "seen_jobs.json"
+
+def load_seen_jobs(ignore_days: int = 7) -> tuple[set, dict]:
+    """Loads historical seen job URLs with timestamps and prunes entries older than ignore_days."""
+    seen_map = {}
+    if os.path.exists(SEEN_JOBS_FILE):
+        try:
+            with open(SEEN_JOBS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    seen_map = data
+                elif isinstance(data, list):
+                    # Migration from list format
+                    now_str = datetime.now(timezone.utc).isoformat()
+                    seen_map = {url: now_str for url in data}
+        except Exception as e:
+            print(f"[!] Error loading {SEEN_JOBS_FILE}: {e}", flush=True)
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=ignore_days) if ignore_days > 0 else None
+    active_urls = set()
+    pruned_map = {}
+
+    for url, ts_str in seen_map.items():
+        try:
+            ts = datetime.fromisoformat(ts_str)
+            if cutoff is None or ts >= cutoff:
+                active_urls.add(url)
+                pruned_map[url] = ts_str
+        except Exception:
+            active_urls.add(url)
+            pruned_map[url] = ts_str
+
+    return active_urls, pruned_map
+
+def save_seen_jobs(seen_map: dict):
+    """Saves timestamped seen job URLs to seen_jobs.json."""
+    try:
+        with open(SEEN_JOBS_FILE, "w", encoding="utf-8") as f:
+            json.dump(seen_map, f, indent=2, sort_keys=True)
+        print(f"[+] Saved {len(seen_map)} total historical job URLs to {SEEN_JOBS_FILE}", flush=True)
+    except Exception as e:
+        print(f"[!] Error saving {SEEN_JOBS_FILE}: {e}", flush=True)
+
+
 
 def load_yaml_file(filepath: str, default_dict: dict) -> dict:
     """Helper to load a YAML file with a fallback dictionary."""
@@ -307,8 +353,12 @@ def main():
     else:
         print("[!] GEMINI_API_KEY not set. Job evaluation will run in fallback mode without LLM filtering.", flush=True)
 
+    HISTORY_CFG = APP_SETTINGS.get("history", {})
+    IGNORE_DAYS = int(os.getenv("IGNORE_DAYS", HISTORY_CFG.get("ignore_days", 7)))
+
     matched_jobs = []
-    seen_urls = set()
+    seen_urls, seen_map = load_seen_jobs(ignore_days=IGNORE_DAYS)
+    print(f"[*] Loaded {len(seen_urls)} active job URLs seen within the last {IGNORE_DAYS} days.", flush=True)
     item_id = 1
 
     for search_term in JOBS_LIST:
@@ -340,6 +390,7 @@ def main():
                     continue
                 if job_url:
                     seen_urls.add(job_url)
+                    seen_map[job_url] = datetime.now(timezone.utc).isoformat()
 
                 title = str(row.get("title", "Unknown Title"))
                 company = str(row.get("company", "Unknown Company"))
@@ -360,7 +411,11 @@ def main():
                     })
                     item_id += 1
 
-    print(f"[+] Total unique matched vacancies: {len(matched_jobs)}", flush=True)
+    print(f"[+] Total new unique matched vacancies today: {len(matched_jobs)}", flush=True)
+
+    # Save updated seen_map history
+    save_seen_jobs(seen_map)
+
 
     # For debugging/testing, cap report to top 10 matched jobs
     if len(matched_jobs) > 10:
@@ -368,7 +423,6 @@ def main():
         matched_jobs = matched_jobs[:10]
 
     # 1. Build HTML Report
-
     html_report = build_html_report(matched_jobs)
 
     # 2. Save HTML report locally if configured
@@ -384,7 +438,7 @@ def main():
     jobs_summary = ", ".join(JOBS_LIST)
     locs_summary = ", ".join(LOCATIONS_LIST)
     if matched_jobs:
-        subject = f"🎯 Daily Job Vacancies: {len(matched_jobs)} matches for {jobs_summary} ({locs_summary})"
+        subject = f"🎯 Daily Job Vacancies: {len(matched_jobs)} new matches for {jobs_summary} ({locs_summary})"
     else:
         subject = f"ℹ️ Daily Job Vacancies: No new matches ({locs_summary})"
     
@@ -402,6 +456,7 @@ def main():
                 f"📝 {match['short_description']}"
             )
             send_telegram_message(tg_token, tg_chat_id, msg)
+
 
 if __name__ == "__main__":
     main()
