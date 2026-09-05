@@ -355,7 +355,13 @@ def main():
 
     print(f"[+] Total unique matched vacancies: {len(matched_jobs)}", flush=True)
 
+    # For debugging/testing, cap report to top 10 matched jobs
+    if len(matched_jobs) > 10:
+        print(f"[*] Capping report to top 10 matches for debug testing (out of {len(matched_jobs)} total).", flush=True)
+        matched_jobs = matched_jobs[:10]
+
     # 1. Build HTML Report
+
     html_report = build_html_report(matched_jobs)
 
     # 2. Save HTML report locally if configured

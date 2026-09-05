@@ -4,7 +4,8 @@ scraper:
   sites:
     - "linkedin"
   hours_old: 24
-  results_wanted: 50
+  results_wanted: 10
+
 
 email:
   smtp_server: "smtp.gmail.com"
