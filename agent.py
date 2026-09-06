@@ -14,6 +14,8 @@ from jobspy import scrape_jobs
 from google import genai
 from google.genai import types
 
+from scorer import score_jobs, extract_skills_summary
+
 # Ensure UTF-8 output encoding for Windows stdout/stderr to support multi-language characters
 if sys.stdout and hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -72,7 +74,6 @@ def save_seen_jobs(seen_map: dict):
         print(f"[!] Error saving {SEEN_JOBS_FILE}: {e}", flush=True)
 
 
-
 def load_yaml_file(filepath: str, default_dict: dict) -> dict:
     """Helper to load a YAML file with a fallback dictionary."""
     data = default_dict.copy()
@@ -94,6 +95,7 @@ JOB_CONFIG = load_yaml_file(JOB_DEF_FILE, {
     "jobs": [],
     "locations": [],
     "keywords": [],
+    "industries": [],
     "exclude": []
 })
 
@@ -101,7 +103,7 @@ JOB_CONFIG = load_yaml_file(JOB_DEF_FILE, {
 APP_SETTINGS = load_yaml_file(SETTINGS_FILE, {
     "scraper": {"sites": ["linkedin"], "hours_old": 24, "results_wanted": 20},
     "email": {"smtp_server": "smtp.gmail.com", "smtp_port": 587, "use_tls": True, "email_to": "", "email_from": ""},
-    "llm": {"model": "gemini-3.6-flash", "enabled": True},
+    "llm": {"model": "gemini-1.5-flash", "enabled": True},
     "reports": {"save_local_html": True, "local_filename": "jobs_report.html"}
 })
 
@@ -129,21 +131,6 @@ LLM_OLLAMA_HOST = LLM_CFG.get("ollama_host", "http://localhost:11434")
 
 # Global flag to immediately switch to 0s local mode if quota is reached
 QUOTA_EXHAUSTED_FLAG = [False]
-
-# Construct AI profile criteria dynamically from keywords, target industries, and exclusions
-keywords_formatted = "\n".join([f"- {k}" for k in KEYWORDS_LIST])
-industries_formatted = "\n".join([f"- {ind}" for ind in INDUSTRIES_LIST])
-exclude_formatted = "\n".join([f"- Exclude: {e}" for e in EXCLUDE_LIST])
-MY_PROFILE_CRITERIA = f"""
-Target Criteria & Keywords:
-{keywords_formatted}
-
-Preferred Target Industries (High Priority):
-{industries_formatted}
-
-Exclusion Rules:
-{exclude_formatted}
-"""
 
 
 def parse_job_entries(job_config: dict) -> list[dict]:
@@ -214,6 +201,7 @@ def resolve_target_locations(entry: dict, global_locations: list[str]) -> list[s
         return matched
     return target
 
+
 def send_telegram_message(bot_token: str, chat_id: str, message: str):
     """Sends notification message to your Telegram channel/DM."""
     if not bot_token or not chat_id:
@@ -231,298 +219,6 @@ def send_telegram_message(bot_token: str, chat_id: str, message: str):
         print("[Telegram] Alert sent successfully.", flush=True)
     except Exception as e:
         print(f"[Telegram] Error sending message: {e}", flush=True)
-
-def extract_skills_summary(description: str, job_title: str, max_words: int = 30) -> str:
-    """Extracts matched keywords, target industries, and the first 30 words of job description as a clean fallback summary."""
-    if not description or len(description.strip()) == 0:
-        return f"Position: {job_title}"
-    
-    # Clean whitespace and extract first max_words
-    words = description.split()
-    first_n_words = " ".join(words[:max_words])
-    if len(words) > max_words:
-        first_n_words += "..."
-
-    # Extract matched keywords and target industries
-    found_skills = []
-    seen_lower = set()
-
-    for kw in KEYWORDS_LIST + INDUSTRIES_LIST:
-        k_lower = kw.lower()
-        if k_lower not in seen_lower and re.search(r'\b' + re.escape(kw) + r'\b', description + " " + job_title, re.IGNORECASE):
-            found_skills.append(kw)
-            seen_lower.add(k_lower)
-
-    if found_skills:
-        skills_str = ", ".join(found_skills[:6])
-        return f"<strong>Key Skills/Industry: {skills_str}</strong> — {first_n_words}"
-    else:
-        return f"<strong>Overview:</strong> {first_n_words}"
-
-
-def get_job_priority(job: dict) -> tuple[int, int]:
-    """Returns priority sorting tuple (rank, original_id):
-    Rank 1: Purchasing / Procurement roles in Preferred Target Industries (Defense, Automotive, Aerospace, Medical, Space)
-    Rank 2: Purchasing / Procurement roles in Israel
-    Rank 3: Purchasing / Procurement roles in Poland
-    Rank 4: Purchasing / Procurement roles in Ukraine
-    Rank 5: All other matched roles
-    """
-    title = job.get("title", "").lower()
-    country = job.get("country", "").lower()
-    desc = job.get("short_description", "").lower() + " " + str(job.get("verdict", "")).lower()
-
-    buyer_keywords = ["buyer", "purchasing", "procurement", "sourcing", "קניין", "רכש", "zakupów", "kupiec", "закупівель", "постачання"]
-    is_buyer_role = any(kw in title for kw in buyer_keywords)
-
-    # Check preferred industry match (Defense, Automotive, Aerospace, Medical, Space, etc.)
-    has_preferred_industry = False
-    for ind in INDUSTRIES_LIST:
-        if ind.lower() in title or ind.lower() in desc:
-            has_preferred_industry = True
-            break
-
-    if is_buyer_role and has_preferred_industry:
-        rank = 1
-    elif is_buyer_role and "israel" in country:
-        rank = 2
-    elif is_buyer_role and "poland" in country:
-        rank = 3
-    elif is_buyer_role and "ukraine" in country:
-        rank = 4
-    else:
-        rank = 5
-
-    return (rank, job.get("id", 0))
-
-
-def parse_batch_response(batch: list[dict], response_text: str):
-    """Parses LLM batch evaluation response and assigns eval_result to each job dict."""
-    blocks = re.split(r'===\s*EVALUATION FOR JOB\s*\d+\s*===', response_text)
-    eval_blocks = [b.strip() for b in blocks if b.strip()]
-
-    for idx, job in enumerate(batch):
-        block_text = eval_blocks[idx] if idx < len(eval_blocks) else ""
-        if block_text:
-            is_match = "MATCH: YES" in block_text
-            summary = ""
-            for line in block_text.splitlines():
-                if line.startswith("SUMMARY:"):
-                    summary = line.replace("SUMMARY:", "").strip()
-                    if summary.startswith("Key Skills:"):
-                        parts = summary.split(" — ", 1)
-                        if len(parts) == 2:
-                            summary = f"<strong>{parts[0]}</strong> — {parts[1]}"
-                        else:
-                            summary = f"<strong>{summary}</strong>"
-                    break
-                elif line.startswith("REASON:") and not summary:
-                    summary = line.replace("REASON:", "").strip()
-            
-            if not summary:
-                summary = extract_skills_summary(job.get("desc", ""), job.get("title", ""))
-            
-            job["eval_result"] = {
-                "match": is_match,
-                "verdict": block_text,
-                "short_description": summary
-            }
-        else:
-            job["eval_result"] = {
-                "match": True,
-                "verdict": "MATCH: YES (Fallback)",
-                "short_description": extract_skills_summary(job.get("desc", ""), job.get("title", ""))
-            }
-
-
-def evaluate_jobs_batch(client: genai.Client, unparsed_jobs: list[dict], last_request_time: list[float]):
-    """Evaluates a list of scraped jobs using LLM in batches with request delay pacing and exponential retries."""
-    if not unparsed_jobs:
-        return
-
-    # 1. Local keyword pre-filtering to eliminate obvious non-matches without API calls
-    for j in unparsed_jobs:
-        desc_lower = j.get("desc", "").lower()
-        title_lower = j.get("title", "").lower()
-        for ex in EXCLUDE_LIST:
-            if ex.lower() in desc_lower or ex.lower() in title_lower:
-                j["eval_result"] = {"match": False, "verdict": f"Excluded due to keyword: {ex}", "short_description": ""}
-                break
-
-def call_llm_api(prompt: str, client: genai.Client, last_request_time: list[float]) -> str:
-    """Dispatches prompt to configured LLM provider (gemini, groq, openrouter, ollama)."""
-    if QUOTA_EXHAUSTED_FLAG[0]:
-        return None
-
-    # Rate limit delay pacing: enforce requests_per_minute quota
-    min_interval = 60.0 / max(1, LLM_RPM)
-    elapsed = time.time() - last_request_time[0]
-    if elapsed < min_interval:
-        sleep_needed = min_interval - elapsed
-        time.sleep(sleep_needed)
-
-    for attempt in range(LLM_MAX_RETRIES + 1):
-        try:
-            last_request_time[0] = time.time()
-            if LLM_PROVIDER == "groq":
-                groq_key = os.getenv("GROQ_API_KEY") or LLM_CFG.get("api_key", "")
-                if not groq_key:
-                    raise Exception("GROQ_API_KEY not found in environment or settings.yaml")
-                url = "https://api.groq.com/openai/v1/chat/completions"
-                headers = {"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"}
-                model_name = LLM_MODEL if LLM_MODEL and "gemini" not in LLM_MODEL else "llama-3.1-8b-instant"
-                payload = {"model": model_name, "messages": [{"role": "user", "content": prompt}], "temperature": 0.2}
-                res = requests.post(url, headers=headers, json=payload, timeout=20)
-                if res.status_code == 200:
-                    return res.json()["choices"][0]["message"]["content"]
-                else:
-                    raise Exception(f"Groq API Error {res.status_code}: {res.text}")
-
-            elif LLM_PROVIDER == "openrouter":
-                or_key = os.getenv("OPENROUTER_API_KEY") or LLM_CFG.get("api_key", "")
-                if not or_key:
-                    raise Exception("OPENROUTER_API_KEY not found in environment or settings.yaml")
-                url = "https://openrouter.ai/api/v1/chat/completions"
-                headers = {"Authorization": f"Bearer {or_key}", "Content-Type": "application/json"}
-                model_name = LLM_MODEL if LLM_MODEL and "gemini" not in LLM_MODEL else "meta-llama/llama-3.1-8b-instruct:free"
-                payload = {"model": model_name, "messages": [{"role": "user", "content": prompt}], "temperature": 0.2}
-                res = requests.post(url, headers=headers, json=payload, timeout=20)
-                if res.status_code == 200:
-                    return res.json()["choices"][0]["message"]["content"]
-                else:
-                    raise Exception(f"OpenRouter API Error {res.status_code}: {res.text}")
-
-            elif LLM_PROVIDER == "ollama":
-                url = f"{LLM_OLLAMA_HOST.rstrip('/')}/api/generate"
-                model_name = LLM_MODEL if LLM_MODEL and "gemini" not in LLM_MODEL else "llama3.2"
-                payload = {"model": model_name, "prompt": prompt, "stream": False}
-                res = requests.post(url, json=payload, timeout=30)
-                if res.status_code == 200:
-                    return res.json().get("response", "")
-                else:
-                    raise Exception(f"Ollama API Error {res.status_code}: {res.text}")
-
-            else:
-                # Default: Gemini API
-                if not client:
-                    return None
-                gen_config = types.GenerateContentConfig(
-                    automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True)
-                )
-                res = client.models.generate_content(
-                    model=LLM_MODEL,
-                    contents=prompt,
-                    config=gen_config
-                )
-                return res.text
-
-        except Exception as e:
-            err_msg = str(e)
-            is_quota_limit = ("429" in err_msg or "ResourceExhausted" in err_msg or "quota" in err_msg.lower() or "rate" in err_msg.lower())
-            
-            if is_quota_limit:
-                QUOTA_EXHAUSTED_FLAG[0] = True
-                print(f"\n[LLM Quota Exceeded] Quota limit reached ({err_msg[:80]}...).", flush=True)
-                print("[LLM Circuit Breaker] Instantly switching to fast local key skills & 30-word summary mode (0s delay for remaining jobs)...\n", flush=True)
-                return None
-            else:
-                print(f"[LLM] Notice: Provider '{LLM_PROVIDER}' notice/error (attempt {attempt + 1}/{LLM_MAX_RETRIES}): {err_msg[:100]}...", flush=True)
-
-    return None
-
-
-def evaluate_jobs_batch(client: genai.Client, unparsed_jobs: list[dict], last_request_time: list[float]):
-    """Evaluates a list of scraped jobs using LLM in batches with request delay pacing and exponential retries."""
-    if not unparsed_jobs:
-        return
-
-    # 1. Local keyword pre-filtering to eliminate obvious non-matches without API calls
-    for j in unparsed_jobs:
-        desc_lower = j.get("desc", "").lower()
-        title_lower = j.get("title", "").lower()
-        for ex in EXCLUDE_LIST:
-            if ex.lower() in desc_lower or ex.lower() in title_lower:
-                j["eval_result"] = {"match": False, "verdict": f"Excluded due to keyword: {ex}", "short_description": ""}
-                break
-
-    pending_jobs = [j for j in unparsed_jobs if "eval_result" not in j]
-
-    if not pending_jobs or QUOTA_EXHAUSTED_FLAG[0] or (LLM_PROVIDER == "gemini" and not client):
-        for j in pending_jobs:
-            j["eval_result"] = {
-                "match": True,
-                "verdict": "MATCH: YES (Local Fallback)",
-                "short_description": extract_skills_summary(j.get("desc", ""), j.get("title", ""))
-            }
-        return
-
-    # 2. Process pending jobs in chunks of LLM_BATCH_SIZE
-    chunk_size = max(1, LLM_BATCH_SIZE)
-    for i in range(0, len(pending_jobs), chunk_size):
-        batch = pending_jobs[i:i + chunk_size]
-
-        if QUOTA_EXHAUSTED_FLAG[0]:
-            for j in batch:
-                j["eval_result"] = {
-                    "match": True,
-                    "verdict": "MATCH: YES (Local Fallback)",
-                    "short_description": extract_skills_summary(j.get("desc", ""), j.get("title", ""))
-                }
-            continue
-
-        prompt_parts = [
-            "You are an expert universal career agent. Read and analyze these job postings carefully.",
-            "\nUser Criteria & Exclusions:",
-            MY_PROFILE_CRITERIA,
-            "\nJobs to Evaluate:"
-        ]
-
-        for idx, job in enumerate(batch, 1):
-            prompt_parts.append(f"\n--- JOB {idx} ---")
-            prompt_parts.append(f"Title: {job.get('title', 'N/A')}")
-            prompt_parts.append(f"Company: {job.get('company', 'N/A')}")
-            prompt_parts.append(f"Description: {job.get('desc', '')[:2000]}")
-
-        prompt_parts.append("""
-Instructions:
-For EACH job listed above:
-1. Determine if it matches the user criteria.
-2. Extract key skills/tools required for the position.
-3. Generate a 1-sentence summary of the core role responsibilities.
-
-Respond in this EXACT format for each job:
-=== EVALUATION FOR JOB 1 ===
-MATCH: [YES / NO]
-SCORE: [0-100]%
-SUMMARY: Key Skills: [3-6 key skills/tools] — [1 concise sentence describing the role]
-REASON: [1 sentence summarizing why it fits or fails]
-""")
-
-        prompt = "\n".join(prompt_parts)
-
-        response_text = call_llm_api(prompt, client, last_request_time)
-
-        if response_text:
-            parse_batch_response(batch, response_text)
-        else:
-            # Instant fallback if quota reached or provider returned error
-            for job in batch:
-                job["eval_result"] = {
-                    "match": True,
-                    "verdict": "MATCH: YES (Local Fallback)",
-                    "short_description": extract_skills_summary(job.get("desc", ""), job.get("title", ""))
-                }
-
-
-def evaluate_job(client: genai.Client, job_title: str, company: str, description: str) -> dict:
-    """Single job evaluation wrapper for backward compatibility."""
-    single_job = [{"title": job_title, "company": company, "desc": description}]
-    evaluate_jobs_batch(client, single_job, [0.0])
-    return single_job[0].get("eval_result", {
-        "match": True,
-        "verdict": "MATCH: YES (Fallback)",
-        "short_description": extract_skills_summary(description, job_title)
-    })
 
 
 def build_html_report(matched_jobs: list) -> str:
@@ -651,11 +347,205 @@ def send_email_report(subject: str, html_body: str) -> bool:
         print(f"[!] Failed to send email: {e}", flush=True)
         return False
 
-def main():
-    gemini_api_key = os.getenv("GEMINI_API_KEY")
+
+# ==========================================
+# REFACTORED PIPELINE STEPS
+# ==========================================
+
+def step1_scrape_all_jobs(job_config: dict, app_settings: dict) -> list[dict]:
+    """Step 1: Performs search according to job list and location scoping."""
+    job_entries = parse_job_entries(job_config)
+    locations_list = job_config.get("locations", []) or []
+    scraper_cfg = app_settings.get("scraper", {})
+    sites = scraper_cfg.get("sites", ["linkedin"])
+    hours_old = int(os.getenv("HOURS_OLD", scraper_cfg.get("hours_old", 24)))
+    results_wanted = int(os.getenv("RESULTS_WANTED", scraper_cfg.get("results_wanted", 20)))
+
+    print(f"[*] STEP 1: Scrape & Search positions across locations: {locations_list}", flush=True)
+    raw_found_jobs = []
+
+    for entry in job_entries:
+        search_term = entry.get("title", "")
+        if not search_term:
+            continue
+
+        target_locs = resolve_target_locations(entry, locations_list)
+        if not target_locs:
+            print(f"[*] Skipping '{search_term}' (no target location match in active list {locations_list}).", flush=True)
+            continue
+
+        for loc in target_locs:
+            print(f"[*] Scanning {sites} for '{search_term}' in '{loc}' (target: {loc}, wanted: {results_wanted}, hours_old: {hours_old})...", flush=True)
+            try:
+                jobs = scrape_jobs(
+                    site_name=sites,
+                    search_term=search_term,
+                    location=loc,
+                    results_wanted=results_wanted,
+                    hours_old=hours_old,
+                    country_override=loc.lower(),
+                    linkedin_fetch_description=True
+                )
+            except Exception as e:
+                print(f"[!] Scraping failed for '{search_term}' in '{loc}': {e}", flush=True)
+                continue
+
+            if jobs is None or jobs.empty:
+                print(f"[-] No new jobs found for '{search_term}' in '{loc}'.", flush=True)
+                continue
+
+            print(f"[+] Scraped {len(jobs)} jobs for '{search_term}' in '{loc}'.", flush=True)
+
+            for _, row in jobs.iterrows():
+                job_url = str(row.get("job_url", "")).strip()
+                title = str(row.get("title", "Unknown Title"))
+                company = str(row.get("company", "Unknown Company"))
+                job_loc = str(row.get("location", loc))
+                desc = str(row.get("description", ""))
+
+                raw_found_jobs.append({
+                    "title": title,
+                    "company": company,
+                    "location": job_loc if job_loc and job_loc != "nan" else loc,
+                    "country": loc,
+                    "desc": desc,
+                    "url": job_url
+                })
+
+    print(f"[+] STEP 1 Complete: Total raw jobs collected = {len(raw_found_jobs)}", flush=True)
+    return raw_found_jobs
+
+
+def step2_filter_seen_jobs(found_jobs: list[dict], ignore_days: int) -> tuple[list[dict], set, dict]:
+    """Step 2 & 3: Creates list of found jobs and removes jobs sent already in the last 7 days."""
+    seen_urls, seen_map = load_seen_jobs(ignore_days=ignore_days)
+    print(f"[*] STEP 2 & 3: Loaded {len(seen_urls)} job URLs seen within the last {ignore_days} days.", flush=True)
+
+    unseen_jobs = []
+    run_urls = set()
+
+    for job in found_jobs:
+        u = job.get("url", "")
+        if u and (u in seen_urls or u in run_urls):
+            continue
+        if u:
+            run_urls.add(u)
+        unseen_jobs.append(job)
+
+    print(f"[+] STEP 2 & 3 Complete: Filtered out {len(found_jobs) - len(unseen_jobs)} seen/duplicate jobs. Remaining = {len(unseen_jobs)}", flush=True)
+    return unseen_jobs, seen_urls, seen_map
+
+
+def step3_filter_exclusions(jobs_list: list[dict], exclude_list: list) -> list[dict]:
+    """Step 4: Removes jobs matching exclusion criteria."""
+    print(f"[*] STEP 4: Applying {len(exclude_list)} exclusion criteria...", flush=True)
+    filtered_jobs = []
+
+    for job in jobs_list:
+        desc_lower = job.get("desc", "").lower()
+        title_lower = job.get("title", "").lower()
+        excluded = False
+
+        for ex in exclude_list:
+            if ex.lower() in desc_lower or ex.lower() in title_lower:
+                excluded = True
+                break
+
+        if not excluded:
+            filtered_jobs.append(job)
+
+    print(f"[+] STEP 4 Complete: Filtered out {len(jobs_list) - len(filtered_jobs)} excluded jobs. Remaining = {len(filtered_jobs)}", flush=True)
+    return filtered_jobs
+
+
+def step4_score_jobs(jobs_list: list[dict], client: genai.Client, job_config: dict, app_settings: dict, last_request_time: list[float], quota_exhausted_flag: list[bool]) -> list[dict]:
+    """Step 5: Gives score for each job left by country and by industry via dedicated scorer module."""
+    print(f"[*] STEP 5: Scoring {len(jobs_list)} candidate jobs by country & industry via dedicated scorer.py module...", flush=True)
+    scored = score_jobs(client, jobs_list, job_config, app_settings, last_request_time, quota_exhausted_flag)
+    print(f"[+] STEP 5 Complete: Scored {len(scored)} jobs.", flush=True)
+    return scored
+
+
+def step5_select_top_jobs(scored_jobs: list[dict], max_results: int = 30) -> list[dict]:
+    """Step 6: Prepares final list according to the defined number of jobs."""
+    print(f"[*] STEP 6: Selecting top {max_results} highest-scoring jobs (out of {len(scored_jobs)} scored matches)...", flush=True)
+    top_jobs = scored_jobs[:max_results]
+
+    final_list = []
+    for idx, j in enumerate(top_jobs, 1):
+        eval_res = j.get("eval_result", {})
+        final_list.append({
+            "id": idx,
+            "title": j.get("title", "Unknown Title"),
+            "company": j.get("company", "Unknown Company"),
+            "location": j.get("location", j.get("country", "N/A")),
+            "country": j.get("country", "N/A"),
+            "short_description": eval_res.get("short_description", ""),
+            "url": j.get("url", "#"),
+            "verdict": eval_res.get("verdict", ""),
+            "score": j.get("score", 0.0)
+        })
+
+    print(f"[+] STEP 6 Complete: Final report selection contains {len(final_list)} top-scoring positions.", flush=True)
+    return final_list
+
+
+def step6_dispatch_reports(final_jobs: list[dict], seen_urls: set, seen_map: dict, ignore_days: int):
+    """Dispatches reports and updates seen_jobs history."""
+    print(f"[*] Dispatching final reports...", flush=True)
+    
+    # 1. Update seen_jobs.json history for top selected jobs
+    now_str = datetime.now(timezone.utc).isoformat()
+    for j in final_jobs:
+        u = j.get("url")
+        if u:
+            seen_urls.add(u)
+            seen_map[u] = now_str
+
+    save_seen_jobs(seen_map)
+
+    # 2. Build HTML report
+    html_report = build_html_report(final_jobs)
+
+    # 3. Save local HTML report if configured
+    reports_cfg = APP_SETTINGS.get("reports", {})
+    if reports_cfg.get("save_local_html", True):
+        filename = reports_cfg.get("local_filename", "jobs_report.html")
+        report_filepath = os.path.abspath(filename)
+        with open(report_filepath, "w", encoding="utf-8") as f:
+            f.write(html_report)
+        print(f"[+] Local HTML report saved to: file:///{report_filepath.replace('\\', '/')}", flush=True)
+
+    # 4. Dispatch Email Report
+    jobs_summary = ", ".join(JOBS_LIST)
+    locs_summary = ", ".join(LOCATIONS_LIST)
+    if final_jobs:
+        subject = f"🎯 Daily Job Vacancies: {len(final_jobs)} new matches for {jobs_summary} ({locs_summary})"
+    else:
+        subject = f"ℹ️ Daily Job Vacancies: No new matches ({locs_summary})"
+
+    send_email_report(subject, html_report)
+
+    # 5. Dispatch Telegram Notifications
     tg_token = os.getenv("TELEGRAM_BOT_TOKEN")
     tg_chat_id = os.getenv("TELEGRAM_CHAT_ID")
+    if tg_token and tg_chat_id and final_jobs:
+        print("[*] Sending Telegram notifications...", flush=True)
+        for match in final_jobs:
+            msg = (
+                f"🎯 *New Job Match #{match['id']} (Score: {match['score']:.0f})*\n\n"
+                f"*{match['title']}* at *{match['company']}*\n"
+                f"📍 Location: {match['location']} ({match['country']})\n"
+                f"🔗 [Job Link]({match['url']})\n\n"
+                f"📝 {match['short_description']}"
+            )
+            send_telegram_message(tg_token, tg_chat_id, msg)
 
+    print("[+] Pipeline Execution Finished Successfully!", flush=True)
+
+
+def main():
+    gemini_api_key = os.getenv("GEMINI_API_KEY")
     client = None
     if LLM_PROVIDER == "gemini":
         if gemini_api_key:
@@ -669,159 +559,31 @@ def main():
     elif LLM_PROVIDER == "ollama":
         print(f"[*] LLM Provider set to local Ollama ({LLM_OLLAMA_HOST}).", flush=True)
 
-    HISTORY_CFG = APP_SETTINGS.get("history", {})
-    IGNORE_DAYS = int(os.getenv("IGNORE_DAYS", HISTORY_CFG.get("ignore_days", 7)))
+    history_cfg = APP_SETTINGS.get("history", {})
+    ignore_days = int(os.getenv("IGNORE_DAYS", history_cfg.get("ignore_days", 7)))
+    max_results = int(os.getenv("RESULTS_WANTED", 30))
 
-    matched_jobs = []
-    seen_urls, seen_map = load_seen_jobs(ignore_days=IGNORE_DAYS)
-    print(f"[*] Loaded {len(seen_urls)} active job URLs seen within the last {IGNORE_DAYS} days.", flush=True)
-    item_id = 1
     last_request_time = [0.0]
 
-    job_entries = parse_job_entries(JOB_CONFIG)
-    print(f"[*] Configured {len(job_entries)} position terms across locations: {LOCATIONS_LIST}", flush=True)
+    # --- SW PIPELINE EXECUTION ---
+    # 1. load job_definition file and perform search according to job list.
+    found_jobs = step1_scrape_all_jobs(JOB_CONFIG, APP_SETTINGS)
 
-    for entry in job_entries:
-        search_term = entry.get("title", "")
-        if not search_term:
-            continue
+    # 2 & 3. create list of all found jobs & remove jobs sent already in last 7 days
+    unseen_jobs, seen_urls, seen_map = step2_filter_seen_jobs(found_jobs, ignore_days=ignore_days)
 
-        target_locs = resolve_target_locations(entry, LOCATIONS_LIST)
-        if not target_locs:
-            print(f"[*] Skipping '{search_term}' (no active target location match among {LOCATIONS_LIST}).", flush=True)
-            continue
+    # 4. remove jobs with exclusion
+    candidate_jobs = step3_filter_exclusions(unseen_jobs, EXCLUDE_LIST)
 
-        for loc in target_locs:
-            print(f"[*] Scanning {SCRAPE_SITES} for '{search_term}' in '{loc}' (target location matched: {loc}, wanted: {RESULTS_WANTED}, hours_old: {HOURS_OLD})...", flush=True)
-            try:
-                jobs = scrape_jobs(
-                    site_name=SCRAPE_SITES,
-                    search_term=search_term,
-                    location=loc,
-                    results_wanted=RESULTS_WANTED,
-                    hours_old=HOURS_OLD,
-                    country_override=loc.lower(),
-                    linkedin_fetch_description=True
-                )
-            except Exception as e:
-                print(f"[!] Scraping failed for '{search_term}' in '{loc}': {e}", flush=True)
-                continue
+    # 5. give score for each job which left - by country, by industry (separate module scorer.py)
+    scored_jobs = step4_score_jobs(candidate_jobs, client, JOB_CONFIG, APP_SETTINGS, last_request_time, QUOTA_EXHAUSTED_FLAG)
 
-            if jobs is None or jobs.empty:
-                print(f"[-] No new jobs found for '{search_term}' in '{loc}'.", flush=True)
-                continue
+    # 6. prepare final list according to the defined number of jobs
+    final_jobs = step5_select_top_jobs(scored_jobs, max_results=max_results)
 
-            print(f"[+] Scraped {len(jobs)} jobs for '{search_term}' in '{loc}'. Evaluating matches...", flush=True)
-
-            unprocessed_jobs = []
-            for _, row in jobs.iterrows():
-                job_url = str(row.get("job_url", "")).strip()
-                if job_url and job_url in seen_urls:
-                    continue
-
-                # Mark URL seen within current run to avoid duplicate scans
-                if job_url:
-                    seen_urls.add(job_url)
-
-                title = str(row.get("title", "Unknown Title"))
-                company = str(row.get("company", "Unknown Company"))
-                job_loc = str(row.get("location", loc))
-                desc = str(row.get("description", ""))
-
-                unprocessed_jobs.append({
-                    "title": title,
-                    "company": company,
-                    "location": job_loc if job_loc and job_loc != "nan" else loc,
-                    "country": loc,
-                    "desc": desc,
-                    "url": job_url
-                })
-
-            if unprocessed_jobs:
-                evaluate_jobs_batch(client, unprocessed_jobs, last_request_time)
-                for j in unprocessed_jobs:
-                    eval_result = j.get("eval_result", {})
-                    if eval_result.get("match"):
-                        matched_jobs.append({
-                            "id": item_id,
-                            "title": j["title"],
-                            "company": j["company"],
-                            "location": j["location"],
-                            "country": j["country"],
-                            "short_description": eval_result.get("short_description", ""),
-                            "url": j["url"],
-                            "verdict": eval_result.get("verdict", "")
-                        })
-                        item_id += 1
-
-    print(f"[+] Total new unique matched vacancies today: {len(matched_jobs)}", flush=True)
-
-    # 1. Sort matched jobs by user priority:
-    #    Priority 1: Purchasing/Buyer in Israel
-    #    Priority 2: Purchasing/Buyer in Poland
-    #    Priority 3: Purchasing/Buyer in Ukraine
-    #    Priority 4: All other matched vacancies
-    matched_jobs.sort(key=get_job_priority)
-
-    # 2. Cap total report positions to top 30 based on priority ranking
-    if len(matched_jobs) > 30:
-        print(f"[*] Prioritizing and capping report to top 30 positions total (out of {len(matched_jobs)} total matches).", flush=True)
-        matched_jobs = matched_jobs[:30]
-
-    # 3. Re-index IDs sequentially for the final report (1..N)
-    for idx, job in enumerate(matched_jobs, 1):
-        job["id"] = idx
-
-    # Mark ONLY the jobs being sent in today's report as seen in seen_jobs.json
-    now_str = datetime.now(timezone.utc).isoformat()
-    for job in matched_jobs:
-        u = job.get("url")
-        if u:
-            seen_urls.add(u)
-            seen_map[u] = now_str
-
-    # Save updated seen_map history
-    save_seen_jobs(seen_map)
-
-    # 1. Build HTML Report
-    html_report = build_html_report(matched_jobs)
-
-    # 2. Save HTML report locally if configured
-    REPORTS_CFG = APP_SETTINGS.get("reports", {})
-    if REPORTS_CFG.get("save_local_html", True):
-        filename = REPORTS_CFG.get("local_filename", "jobs_report.html")
-        report_filepath = os.path.abspath(filename)
-        with open(report_filepath, "w", encoding="utf-8") as f:
-            f.write(html_report)
-        print(f"[+] Local HTML report saved to: file:///{report_filepath.replace('\\', '/')}", flush=True)
-
-    # 3. Send Email
-    jobs_summary = ", ".join(JOBS_LIST)
-    locs_summary = ", ".join(LOCATIONS_LIST)
-    if matched_jobs:
-        subject = f"🎯 Daily Job Vacancies: {len(matched_jobs)} new matches for {jobs_summary} ({locs_summary})"
-    else:
-        subject = f"ℹ️ Daily Job Vacancies: No new matches ({locs_summary})"
-    
-    send_email_report(subject, html_report)
-
-    # 4. Optional Telegram Notification
-    if tg_token and tg_chat_id and matched_jobs:
-        print("[*] Sending Telegram notifications...", flush=True)
-        for match in matched_jobs:
-            msg = (
-                f"🎯 *New Job Match #{match['id']}!*\n\n"
-                f"*{match['title']}* at *{match['company']}*\n"
-                f"📍 Location: {match['location']} ({match['country']})\n"
-                f"🔗 [Job Link]({match['url']})\n\n"
-                f"📝 {match['short_description']}"
-            )
-            send_telegram_message(tg_token, tg_chat_id, msg)
+    # Dispatch final reports & persist history
+    step6_dispatch_reports(final_jobs, seen_urls, seen_map, ignore_days=ignore_days)
 
 
 if __name__ == "__main__":
     main()
-
-
-
-
