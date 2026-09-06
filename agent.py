@@ -436,16 +436,56 @@ def step2_filter_seen_jobs(found_jobs: list[dict], ignore_days: int) -> tuple[li
     return unseen_jobs, seen_urls, seen_map
 
 
-def step3_filter_exclusions(jobs_list: list[dict], exclude_list: list) -> list[dict]:
-    """Step 4: Removes jobs matching exclusion criteria."""
-    print(f"[*] STEP 4: Applying {len(exclude_list)} exclusion criteria...", flush=True)
+def is_valid_role_title(title: str, job_config: dict) -> bool:
+    """
+    Validates that the job title contains relevant position/role keywords.
+    Filters out irrelevant roles (e.g. Product Manager, Security Researcher, Software Engineer)
+    whose description text merely mentions procurement or purchasing terms.
+    """
+    if not title:
+        return False
+
+    t_lower = title.lower()
+
+    # 1. Direct match with any target job title in job_definition.yaml
+    raw_jobs = job_config.get("jobs", []) or []
+    for item in raw_jobs:
+        jt = item.get("title") if isinstance(item, dict) else str(item)
+        if jt and jt.lower() in t_lower:
+            return True
+
+    # 2. Check for domain role keywords in TITLE
+    role_keywords = [
+        "procurement", "purchasing", "sourcing", "buyer", "kupiec", "zakupów", "zaopatrzenia",
+        "קניין", "רכש", "שרשרת אספקה", "закупівель", "постачання",
+        "supply chain", "vendor", "category manager", "materials planner",
+        "operations coordinator", "supplier coordinator", "supply coordinator", "sales coordinator",
+        "רכז תפעול", "מתאם תפעול", "מתאם ספקים", "מתאם מכירות", "רכז מכירות",
+        "koordynator ds.", "specjalista ds."
+    ]
+
+    for rk in role_keywords:
+        if rk in t_lower:
+            return True
+
+    return False
+
+
+def step3_filter_exclusions(jobs_list: list[dict], exclude_list: list, job_config: dict = None) -> list[dict]:
+    """Step 4: Removes jobs matching exclusion criteria or having non-matching position titles."""
+    print(f"[*] STEP 4: Applying {len(exclude_list)} exclusion rules & position title validation...", flush=True)
     filtered_jobs = []
 
     for job in jobs_list:
+        title = job.get("title", "")
+        title_lower = title.lower()
         desc_lower = job.get("desc", "").lower()
-        title_lower = job.get("title", "").lower()
-        excluded = False
 
+        # Title role validation check
+        if job_config and not is_valid_role_title(title, job_config):
+            continue
+
+        excluded = False
         for ex in exclude_list:
             if ex.lower() in desc_lower or ex.lower() in title_lower:
                 excluded = True
@@ -454,7 +494,7 @@ def step3_filter_exclusions(jobs_list: list[dict], exclude_list: list) -> list[d
         if not excluded:
             filtered_jobs.append(job)
 
-    print(f"[+] STEP 4 Complete: Filtered out {len(jobs_list) - len(filtered_jobs)} excluded jobs. Remaining = {len(filtered_jobs)}", flush=True)
+    print(f"[+] STEP 4 Complete: Filtered out {len(jobs_list) - len(filtered_jobs)} invalid/excluded jobs. Remaining = {len(filtered_jobs)}", flush=True)
     return filtered_jobs
 
 
@@ -571,8 +611,8 @@ def main():
     # 2 & 3. create list of all found jobs & remove jobs sent already in last 7 days
     unseen_jobs, seen_urls, seen_map = step2_filter_seen_jobs(found_jobs, ignore_days=ignore_days)
 
-    # 4. remove jobs with exclusion
-    candidate_jobs = step3_filter_exclusions(unseen_jobs, EXCLUDE_LIST)
+    # 4. remove jobs with exclusion and non-matching job titles
+    candidate_jobs = step3_filter_exclusions(unseen_jobs, EXCLUDE_LIST, JOB_CONFIG)
 
     # 5. give score for each job which left - by country, by industry (separate module scorer.py)
     scored_jobs = step4_score_jobs(candidate_jobs, client, JOB_CONFIG, APP_SETTINGS, last_request_time, QUOTA_EXHAUSTED_FLAG)
