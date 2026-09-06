@@ -454,14 +454,24 @@ def is_valid_role_title(title: str, job_config: dict) -> bool:
         if jt and jt.lower() in t_lower:
             return True
 
-    # 2. Check for domain role keywords in TITLE
+    # 2. Check for keywords from KEYWORDS_LIST or INDUSTRIES_LIST in title
+    keywords = job_config.get("keywords", []) or []
+    industries = job_config.get("industries", []) or []
+    for kw in keywords + industries:
+        if kw and len(kw) > 3 and kw.lower() in t_lower:
+            return True
+
+    # 3. Comprehensive domain role keywords in TITLE (Procurement, Supply Chain, Operations, Logistics, Planning, Commercial)
     role_keywords = [
         "procurement", "purchasing", "sourcing", "buyer", "kupiec", "zakupów", "zaopatrzenia",
         "קניין", "רכש", "שרשרת אספקה", "закупівель", "постачання",
-        "supply chain", "vendor", "category manager", "materials planner",
+        "supply chain", "vendor", "supplier", "category", "materials", "material", "inventory", "demand",
+        "operations", "logistics", "planning", "planner", "commercial", "subcontracting", "tendering",
+        "logistyka", "planowanie", "analityk", "rekrutacji",
+        "תפעול", "לוגיסטיקה", "מלאי", "ספקים",
         "operations coordinator", "supplier coordinator", "supply coordinator", "sales coordinator",
         "רכז תפעול", "מתאם תפעול", "מתאם ספקים", "מתאם מכירות", "רכז מכירות",
-        "koordynator ds.", "specjalista ds."
+        "koordynator", "specjalista", "kierownik"
     ]
 
     for rk in role_keywords:
