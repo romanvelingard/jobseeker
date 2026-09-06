@@ -3,6 +3,7 @@ import os
 import json
 import re
 import smtplib
+import time
 from datetime import datetime, timezone, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -117,6 +118,10 @@ SCRAPE_SITES = SCRAPER_CFG.get("sites", ["linkedin"])
 
 LLM_CFG = APP_SETTINGS.get("llm", {})
 LLM_MODEL = LLM_CFG.get("model", "gemini-3.6-flash")
+LLM_RPM = int(LLM_CFG.get("requests_per_minute", 5))
+LLM_BATCH_SIZE = int(LLM_CFG.get("batch_size", 3))
+LLM_MAX_RETRIES = int(LLM_CFG.get("max_retries", 3))
+LLM_RETRY_DELAY = float(LLM_CFG.get("retry_delay", 12))
 
 # Construct AI profile criteria dynamically from keywords and exclusions
 keywords_formatted = "\n".join([f"- {k}" for k in KEYWORDS_LIST])
@@ -128,6 +133,75 @@ Target Criteria & Keywords:
 Exclusion Rules:
 {exclude_formatted}
 """
+
+
+def parse_job_entries(job_config: dict) -> list[dict]:
+    """
+    Parses jobs from job_config, supporting flat lists, structured lists, and jobs_by_location dictionary.
+    Returns a list of dicts: [{'title': str, 'locations': list[str] | None}]
+    """
+    entries = []
+    
+    # 1. Parse 'jobs_by_location' section if present
+    jobs_by_loc = job_config.get("jobs_by_location")
+    if isinstance(jobs_by_loc, dict):
+        for loc_key, title_list in jobs_by_loc.items():
+            if isinstance(title_list, list):
+                for t in title_list:
+                    if loc_key.lower() in ("global", "all"):
+                        entries.append({"title": str(t), "locations": None})
+                    else:
+                        entries.append({"title": str(t), "locations": [loc_key]})
+
+    # 2. Parse standard 'jobs' list
+    raw_jobs = job_config.get("jobs")
+    if isinstance(raw_jobs, list):
+        for item in raw_jobs:
+            if isinstance(item, dict):
+                t = item.get("title")
+                locs = item.get("locations")
+                if t:
+                    entries.append({"title": str(t), "locations": locs if isinstance(locs, list) else None})
+            elif isinstance(item, str):
+                entries.append({"title": item, "locations": None})
+
+    return entries
+
+
+def resolve_target_locations(entry: dict, global_locations: list[str]) -> list[str]:
+    """
+    Resolves the exact target locations for a job entry.
+    If explicit locations are defined in entry, uses those.
+    Otherwise, uses script/language detection:
+      - Hebrew script -> Israel
+      - Cyrillic script -> Ukraine
+      - Polish script/keywords -> Poland
+      - Global/English -> global_locations
+    Filters resolved locations against global_locations if global_locations is specified.
+    """
+    explicit_locs = entry.get("locations")
+    if explicit_locs and isinstance(explicit_locs, list):
+        target = explicit_locs
+    else:
+        title = entry.get("title", "").strip()
+        # 1. Hebrew script detection -> Israel
+        if re.search(r'[\u0590-\u05FF]', title):
+            target = ["Israel"]
+        # 2. Ukrainian / Cyrillic script detection -> Ukraine
+        elif re.search(r'[\u0400-\u04FF]', title):
+            target = ["Ukraine"]
+        # 3. Polish script detection (diacritics or Polish-specific keywords) -> Poland
+        elif (re.search(r'[ąćęłńóśźżĄĆĘŁŃÓŚŹŻ]', title) or 
+              re.search(r'\b(ds\.|kierownik|kupiec|zakupów|zaopatrzenia|dostawców|sprzedaży|inżynier)\b', title, re.IGNORECASE)):
+            target = ["Poland"]
+        else:
+            target = global_locations
+
+    if global_locations:
+        global_lower = [g.lower() for g in global_locations]
+        matched = [l for l in target if l.lower() in global_lower]
+        return matched
+    return target
 
 def send_telegram_message(bot_token: str, chat_id: str, message: str):
     """Sends notification message to your Telegram channel/DM."""
@@ -147,49 +221,32 @@ def send_telegram_message(bot_token: str, chat_id: str, message: str):
     except Exception as e:
         print(f"[Telegram] Error sending message: {e}", flush=True)
 
-def extract_skills_summary(description: str, job_title: str) -> str:
-    """Extracts key skills and responsibilities dynamically for ANY job domain (software, data, product, sales, marketing, operations, etc.)."""
+def extract_skills_summary(description: str, job_title: str, max_words: int = 30) -> str:
+    """Extracts matched keywords and the first 30 words of job description as a clean fallback summary."""
     if not description or len(description.strip()) == 0:
         return f"Position: {job_title}"
     
-    desc_clean = description.replace("\n", " ").strip()
-    
-    # 1. Dynamically extract matched keywords from job_definition.yaml
+    # Clean whitespace and extract first max_words
+    words = description.split()
+    first_n_words = " ".join(words[:max_words])
+    if len(words) > max_words:
+        first_n_words += "..."
+
+    # Extract matched keywords from job_definition.yaml
     found_skills = []
     seen_lower = set()
 
-    # Check user-configured keywords first
     for kw in KEYWORDS_LIST:
         k_lower = kw.lower()
         if k_lower not in seen_lower and re.search(r'\b' + re.escape(kw) + r'\b', description, re.IGNORECASE):
             found_skills.append(kw)
             seen_lower.add(k_lower)
 
-    # Check common tech & professional tool terms dynamically
-    common_tools = [
-        "Python", "Java", "C++", "C#", "Go", "Rust", "TypeScript", "JavaScript", "React", "Angular", "Vue", "Node.js",
-        "SQL", "PostgreSQL", "MongoDB", "Redis", "Docker", "Kubernetes", "AWS", "Azure", "GCP", "CI/CD", "Jenkins",
-        "Git", "Linux", "REST API", "GraphQL", "Microservices", "System Design", "Agile", "Scrum", "DevOps",
-        "Machine Learning", "AI", "Data Engineering", "ETL", "Security", "Automation", "Testing", "Salesforce",
-        "HubSpot", "Jira", "Confluence", "Figma", "Tableau", "PowerBI", "Excel", "Product Management"
-    ]
-    for tool in common_tools:
-        t_lower = tool.lower()
-        if t_lower not in seen_lower and re.search(r'\b' + re.escape(tool) + r'\b', description, re.IGNORECASE):
-            found_skills.append(tool)
-            seen_lower.add(t_lower)
-
-    # 2. Extract first informative sentence from description
-    sentences = [s.strip() for s in re.split(r'[.!?]', desc_clean) if len(s.strip()) > 20]
-    info_sentence = sentences[0] if sentences else desc_clean[:130]
-    if len(info_sentence) > 140:
-        info_sentence = info_sentence[:140] + "..."
-
     if found_skills:
         skills_str = ", ".join(found_skills[:6])
-        return f"<strong>Key Skills: {skills_str}</strong> — {info_sentence}"
+        return f"<strong>Key Skills: {skills_str}</strong> — {first_n_words}"
     else:
-        return f"<strong>Role Overview:</strong> {info_sentence}"
+        return f"<strong>Overview:</strong> {first_n_words}"
 
 
 def get_job_priority(job: dict) -> tuple[int, int]:
@@ -217,85 +274,151 @@ def get_job_priority(job: dict) -> tuple[int, int]:
     return (rank, job.get("id", 0))
 
 
-def evaluate_job(client: genai.Client, job_title: str, company: str, description: str) -> dict:
-    """Uses Gemini AI to evaluate fit and dynamically extract key skills & role summary for ANY job posting."""
-    desc_lower = description.lower()
-    title_lower = job_title.lower()
-    
-    # 1. Pre-filter local exclusion rules to save API quota
-    for ex in EXCLUDE_LIST:
-        if ex.lower() in desc_lower or ex.lower() in title_lower:
-            return {"match": False, "verdict": f"Excluded due to keyword: {ex}", "short_description": ""}
+def parse_batch_response(batch: list[dict], response_text: str):
+    """Parses LLM batch evaluation response and assigns eval_result to each job dict."""
+    blocks = re.split(r'===\s*EVALUATION FOR JOB\s*\d+\s*===', response_text)
+    eval_blocks = [b.strip() for b in blocks if b.strip()]
 
-    fallback_summary = extract_skills_summary(description, job_title)
+    for idx, job in enumerate(batch):
+        block_text = eval_blocks[idx] if idx < len(eval_blocks) else ""
+        if block_text:
+            is_match = "MATCH: YES" in block_text
+            summary = ""
+            for line in block_text.splitlines():
+                if line.startswith("SUMMARY:"):
+                    summary = line.replace("SUMMARY:", "").strip()
+                    if summary.startswith("Key Skills:"):
+                        parts = summary.split(" — ", 1)
+                        if len(parts) == 2:
+                            summary = f"<strong>{parts[0]}</strong> — {parts[1]}"
+                        else:
+                            summary = f"<strong>{summary}</strong>"
+                    break
+                elif line.startswith("REASON:") and not summary:
+                    summary = line.replace("REASON:", "").strip()
+            
+            if not summary:
+                summary = extract_skills_summary(job.get("desc", ""), job.get("title", ""))
+            
+            job["eval_result"] = {
+                "match": is_match,
+                "verdict": block_text,
+                "short_description": summary
+            }
+        else:
+            job["eval_result"] = {
+                "match": True,
+                "verdict": "MATCH: YES (Fallback)",
+                "short_description": extract_skills_summary(job.get("desc", ""), job.get("title", ""))
+            }
 
-    if not client:
-        return {
-            "match": True,
-            "verdict": "MATCH: YES\nREASON: Scraped job matches criteria (LLM evaluation skipped).",
-            "short_description": fallback_summary
-        }
 
-    prompt = f"""
-You are an expert universal career agent. Read and analyze this job posting carefully.
+def evaluate_jobs_batch(client: genai.Client, unparsed_jobs: list[dict], last_request_time: list[float]):
+    """Evaluates a list of scraped jobs using LLM in batches with request delay pacing and exponential retries."""
+    if not unparsed_jobs:
+        return
 
-User Criteria & Exclusions:
-{MY_PROFILE_CRITERIA}
+    # 1. Local keyword pre-filtering to eliminate obvious non-matches without API calls
+    for j in unparsed_jobs:
+        desc_lower = j.get("desc", "").lower()
+        title_lower = j.get("title", "").lower()
+        for ex in EXCLUDE_LIST:
+            if ex.lower() in desc_lower or ex.lower() in title_lower:
+                j["eval_result"] = {"match": False, "verdict": f"Excluded due to keyword: {ex}", "short_description": ""}
+                break
 
-Job Details:
-Title: {job_title}
-Company: {company}
-Description: {description[:2500]}
+    pending_jobs = [j for j in unparsed_jobs if "eval_result" not in j]
 
+    if not client or not pending_jobs:
+        for j in pending_jobs:
+            j["eval_result"] = {
+                "match": True,
+                "verdict": "MATCH: YES\nREASON: Scraped job matches criteria (LLM evaluation skipped).",
+                "short_description": extract_skills_summary(j.get("desc", ""), j.get("title", ""))
+            }
+        return
+
+    # 2. Process pending jobs in chunks of LLM_BATCH_SIZE
+    chunk_size = max(1, LLM_BATCH_SIZE)
+    for i in range(0, len(pending_jobs), chunk_size):
+        batch = pending_jobs[i:i + chunk_size]
+
+        prompt_parts = [
+            "You are an expert universal career agent. Read and analyze these job postings carefully.",
+            "\nUser Criteria & Exclusions:",
+            MY_PROFILE_CRITERIA,
+            "\nJobs to Evaluate:"
+        ]
+
+        for idx, job in enumerate(batch, 1):
+            prompt_parts.append(f"\n--- JOB {idx} ---")
+            prompt_parts.append(f"Title: {job.get('title', 'N/A')}")
+            prompt_parts.append(f"Company: {job.get('company', 'N/A')}")
+            prompt_parts.append(f"Description: {job.get('desc', '')[:2000]}")
+
+        prompt_parts.append("""
 Instructions:
-1. Determine if this job matches the user criteria.
-2. Analyze the job posting text and figure out the key skills, technologies, tools, or domain qualifications required for THIS specific position (regardless of industry or role).
-3. Generate a concise 1-sentence summary of the core role responsibilities.
+For EACH job listed above:
+1. Determine if it matches the user criteria.
+2. Extract key skills/tools required for the position.
+3. Generate a 1-sentence summary of the core role responsibilities.
 
-Respond ONLY in this format:
+Respond in this EXACT format for each job:
+=== EVALUATION FOR JOB 1 ===
 MATCH: [YES / NO]
 SCORE: [0-100]%
-SUMMARY: Key Skills: [3-6 key skills/tools/technologies extracted by AI] — [1 concise sentence describing the role]
+SUMMARY: Key Skills: [3-6 key skills/tools] — [1 concise sentence describing the role]
 REASON: [1 sentence summarizing why it fits or fails]
-"""
-    try:
-        response = client.models.generate_content(
-            model=LLM_MODEL,
-            contents=prompt
-        )
-        text = response.text
-        is_match = "MATCH: YES" in text
-        
-        summary = ""
-        for line in text.splitlines():
-            if line.startswith("SUMMARY:"):
-                summary = line.replace("SUMMARY:", "").strip()
-                # Wrap AI-extracted skills in HTML bold if present
-                if summary.startswith("Key Skills:"):
-                    parts = summary.split(" — ", 1)
-                    if len(parts) == 2:
-                        summary = f"<strong>{parts[0]}</strong> — {parts[1]}"
-                    else:
-                        summary = f"<strong>{summary}</strong>"
+""")
+
+        prompt = "\n".join(prompt_parts)
+
+        # Rate limit delay pacing: enforce requests_per_minute quota
+        min_interval = 60.0 / max(1, LLM_RPM)
+        elapsed = time.time() - last_request_time[0]
+        if elapsed < min_interval:
+            sleep_needed = min_interval - elapsed
+            time.sleep(sleep_needed)
+
+        response_text = None
+        for attempt in range(LLM_MAX_RETRIES + 1):
+            try:
+                last_request_time[0] = time.time()
+                res = client.models.generate_content(model=LLM_MODEL, contents=prompt)
+                response_text = res.text
                 break
-            elif line.startswith("REASON:") and not summary:
-                summary = line.replace("REASON:", "").strip()
+            except Exception as e:
+                err_msg = str(e)
+                is_rate_limit = ("429" in err_msg or "ResourceExhausted" in err_msg or "quota" in err_msg.lower() or "rate" in err_msg.lower())
+                if is_rate_limit and attempt < LLM_MAX_RETRIES:
+                    wait_time = LLM_RETRY_DELAY * (2 ** attempt)
+                    print(f"[LLM Rate Limit] Quota limit reached (attempt {attempt + 1}/{LLM_MAX_RETRIES}). Waiting {wait_time:.1f}s before retrying...", flush=True)
+                    time.sleep(wait_time)
+                else:
+                    print(f"[LLM] Notice: Batch evaluation notice/error: {err_msg[:100]}...", flush=True)
+                    break
 
-        if not summary:
-            summary = fallback_summary
+        if response_text:
+            parse_batch_response(batch, response_text)
+        else:
+            # Fallback if API fails after retries
+            for job in batch:
+                job["eval_result"] = {
+                    "match": True,
+                    "verdict": "MATCH: YES (Fallback)",
+                    "short_description": extract_skills_summary(job.get("desc", ""), job.get("title", ""))
+                }
 
-        return {
-            "match": is_match,
-            "verdict": text,
-            "short_description": summary
-        }
-    except Exception as e:
-        print(f"[LLM] Notice: Using fallback summary (API limit/notice: {str(e)[:80]}...)", flush=True)
-        return {
-            "match": True,
-            "verdict": "MATCH: YES (Fallback)",
-            "short_description": fallback_summary
-        }
+
+def evaluate_job(client: genai.Client, job_title: str, company: str, description: str) -> dict:
+    """Single job evaluation wrapper for backward compatibility."""
+    single_job = [{"title": job_title, "company": company, "desc": description}]
+    evaluate_jobs_batch(client, single_job, [0.0])
+    return single_job[0].get("eval_result", {
+        "match": True,
+        "verdict": "MATCH: YES (Fallback)",
+        "short_description": extract_skills_summary(description, job_title)
+    })
 
 
 def build_html_report(matched_jobs: list) -> str:
@@ -442,10 +565,23 @@ def main():
     seen_urls, seen_map = load_seen_jobs(ignore_days=IGNORE_DAYS)
     print(f"[*] Loaded {len(seen_urls)} active job URLs seen within the last {IGNORE_DAYS} days.", flush=True)
     item_id = 1
+    last_request_time = [0.0]
 
-    for search_term in JOBS_LIST:
-        for loc in LOCATIONS_LIST:
-            print(f"[*] Scanning {SCRAPE_SITES} for '{search_term}' in '{loc}' (wanted: {RESULTS_WANTED}, hours_old: {HOURS_OLD})...", flush=True)
+    job_entries = parse_job_entries(JOB_CONFIG)
+    print(f"[*] Configured {len(job_entries)} position terms across locations: {LOCATIONS_LIST}", flush=True)
+
+    for entry in job_entries:
+        search_term = entry.get("title", "")
+        if not search_term:
+            continue
+
+        target_locs = resolve_target_locations(entry, LOCATIONS_LIST)
+        if not target_locs:
+            print(f"[*] Skipping '{search_term}' (no active target location match among {LOCATIONS_LIST}).", flush=True)
+            continue
+
+        for loc in target_locs:
+            print(f"[*] Scanning {SCRAPE_SITES} for '{search_term}' in '{loc}' (target location matched: {loc}, wanted: {RESULTS_WANTED}, hours_old: {HOURS_OLD})...", flush=True)
             try:
                 jobs = scrape_jobs(
                     site_name=SCRAPE_SITES,
@@ -466,29 +602,46 @@ def main():
 
             print(f"[+] Scraped {len(jobs)} jobs for '{search_term}' in '{loc}'. Evaluating matches...", flush=True)
 
+            unprocessed_jobs = []
             for _, row in jobs.iterrows():
                 job_url = str(row.get("job_url", "")).strip()
                 if job_url and job_url in seen_urls:
                     continue
+
+                # Mark URL seen within current run to avoid duplicate scans
+                if job_url:
+                    seen_urls.add(job_url)
 
                 title = str(row.get("title", "Unknown Title"))
                 company = str(row.get("company", "Unknown Company"))
                 job_loc = str(row.get("location", loc))
                 desc = str(row.get("description", ""))
 
-                eval_result = evaluate_job(client, title, company, desc)
-                if eval_result["match"]:
-                    matched_jobs.append({
-                        "id": item_id,
-                        "title": title,
-                        "company": company,
-                        "location": job_loc if job_loc and job_loc != "nan" else loc,
-                        "country": loc,
-                        "short_description": eval_result["short_description"],
-                        "url": job_url,
-                        "verdict": eval_result["verdict"]
-                    })
-                    item_id += 1
+                unprocessed_jobs.append({
+                    "title": title,
+                    "company": company,
+                    "location": job_loc if job_loc and job_loc != "nan" else loc,
+                    "country": loc,
+                    "desc": desc,
+                    "url": job_url
+                })
+
+            if unprocessed_jobs:
+                evaluate_jobs_batch(client, unprocessed_jobs, last_request_time)
+                for j in unprocessed_jobs:
+                    eval_result = j.get("eval_result", {})
+                    if eval_result.get("match"):
+                        matched_jobs.append({
+                            "id": item_id,
+                            "title": j["title"],
+                            "company": j["company"],
+                            "location": j["location"],
+                            "country": j["country"],
+                            "short_description": eval_result.get("short_description", ""),
+                            "url": j["url"],
+                            "verdict": eval_result.get("verdict", "")
+                        })
+                        item_id += 1
 
     print(f"[+] Total new unique matched vacancies today: {len(matched_jobs)}", flush=True)
 

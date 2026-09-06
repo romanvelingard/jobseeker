@@ -1,7 +1,15 @@
 # Job Definitions & Search Criteria
+# Note: Position titles are automatically scoped by language/script:
+# - Hebrew titles -> searched ONLY in Israel
+# - Polish titles -> searched ONLY in Poland
+# - Ukrainian titles -> searched ONLY in Ukraine
+# - English titles -> searched across ALL active locations in 'locations'
+# You can also explicitly specify locations for any position using structured dict format:
+#   - title: "Specific Role"
+#     locations: ["Israel"]
 
 jobs:
-  # Global / English Standard
+  # Global / English Standard (Scanned in all active locations)
   - "Procurement Specialist"
   - "Procurement Manager"
   - "Purchasing Manager"
@@ -23,7 +31,7 @@ jobs:
   - "Supply Coordinator"
   - "Sales Coordinator"
 
-  # Hebrew (Israel)
+  # Hebrew (Auto-scoped to Israel)
   - "מנהל רכש"
   - "קניין רכש"
   - "קניין"
@@ -40,7 +48,7 @@ jobs:
   - "מתאם מכירות"
   - "רכז מכירות"
 
-  # Polish (Poland)
+  # Polish (Auto-scoped to Poland)
   - "Specjalista ds. Zakupów"
   - "Kierownik ds. Zakupów"
   - "Kupiec"
@@ -53,7 +61,7 @@ jobs:
   - "Koordynator ds. Dostawców"
   - "Koordynator ds. Sprzedaży"
 
-  # Ukrainian (Ukraine)
+  # Ukrainian (Auto-scoped to Ukraine)
   - "Менеджер із закупівель"
   - "Фахівець із закупівель"
   - "Спеціаліст з постачання"

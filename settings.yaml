@@ -18,6 +18,11 @@ email:
 llm:
   model: "gemini-3.6-flash"
   enabled: true
+  requests_per_minute: 5
+  batch_size: 3
+  max_retries: 3
+  retry_delay: 12
+
 
 
 reports:
