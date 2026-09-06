@@ -517,12 +517,11 @@ def step6_dispatch_reports(final_jobs: list[dict], seen_urls: set, seen_map: dic
         print(f"[+] Local HTML report saved to: file:///{report_filepath.replace('\\', '/')}", flush=True)
 
     # 4. Dispatch Email Report
-    jobs_summary = ", ".join(JOBS_LIST)
-    locs_summary = ", ".join(LOCATIONS_LIST)
+    today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     if final_jobs:
-        subject = f"🎯 Daily Job Vacancies: {len(final_jobs)} new matches for {jobs_summary} ({locs_summary})"
+        subject = f"🎯 Daily Job Vacancies: {len(final_jobs)} new matches for {today_str}"
     else:
-        subject = f"ℹ️ Daily Job Vacancies: No new matches ({locs_summary})"
+        subject = f"ℹ️ Daily Job Vacancies: No new matches for {today_str}"
 
     send_email_report(subject, html_report)
 
