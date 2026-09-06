@@ -517,9 +517,20 @@ def step4_score_jobs(jobs_list: list[dict], client: genai.Client, job_config: di
 
 
 def step5_select_top_jobs(scored_jobs: list[dict], max_results: int = 30) -> list[dict]:
-    """Step 6: Prepares final list according to the defined number of jobs."""
-    print(f"[*] STEP 6: Selecting top {max_results} highest-scoring jobs (out of {len(scored_jobs)} scored matches)...", flush=True)
-    top_jobs = scored_jobs[:max_results]
+    """Step 6: Prepares final list ordered by country tier (Israel first, Poland second, Others third) and composite score."""
+    print(f"[*] STEP 6: Selecting top {max_results} jobs (Israel first, Poland second, Others third)...", flush=True)
+    
+    def get_country_tier(c_str: str) -> int:
+        c = str(c_str or "").lower()
+        if "israel" in c:
+            return 0
+        elif "poland" in c:
+            return 1
+        else:
+            return 2
+
+    sorted_scored = sorted(scored_jobs, key=lambda j: (get_country_tier(j.get("country", "")), -j.get("score", 0.0)))
+    top_jobs = sorted_scored[:max_results]
 
     final_list = []
     for idx, j in enumerate(top_jobs, 1):

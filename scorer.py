@@ -56,11 +56,11 @@ def calculate_rule_score(job: dict, job_config: dict) -> float:
     if any(kw in title for kw in buyer_keywords):
         score += 30.0
 
-    # 3. Country Boost (Israel: +30, Poland: +20, Ukraine: +10)
+    # 3. Country Boost (Israel: +50, Poland: +15, Ukraine: +10)
     if "israel" in country:
-        score += 30.0
+        score += 50.0
     elif "poland" in country:
-        score += 20.0
+        score += 15.0
     elif "ukraine" in country:
         score += 10.0
     else:
@@ -258,7 +258,7 @@ REASON: [1 sentence summarizing why it fits or fails]
                         "ai_score": 50.0
                     }
 
-    # Step 3: Compute final composite score and sort descending
+    # Step 3: Compute final composite score and sort by country tier (Israel=0, Poland=1, Other=2) then descending score
     scored_jobs = []
     for job in jobs_list:
         eval_res = job.get("eval_result", {})
@@ -268,6 +268,15 @@ REASON: [1 sentence summarizing why it fits or fails]
             job["score"] = rule_score + (ai_score * 0.5)
             scored_jobs.append(job)
 
-    # Sort descending by composite score
-    scored_jobs.sort(key=lambda j: j.get("score", 0.0), reverse=True)
+    def get_country_tier(c_str: str) -> int:
+        c = str(c_str or "").lower()
+        if "israel" in c:
+            return 0
+        elif "poland" in c:
+            return 1
+        else:
+            return 2
+
+    # Sort by country tier ascending, then score descending
+    scored_jobs.sort(key=lambda j: (get_country_tier(j.get("country", "")), -j.get("score", 0.0)))
     return scored_jobs
