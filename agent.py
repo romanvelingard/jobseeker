@@ -118,11 +118,16 @@ RESULTS_WANTED = int(os.getenv("RESULTS_WANTED", SCRAPER_CFG.get("results_wanted
 SCRAPE_SITES = SCRAPER_CFG.get("sites", ["linkedin"])
 
 LLM_CFG = APP_SETTINGS.get("llm", {})
-LLM_MODEL = LLM_CFG.get("model", "gemini-3.6-flash")
-LLM_RPM = int(LLM_CFG.get("requests_per_minute", 5))
+LLM_PROVIDER = str(LLM_CFG.get("provider", "gemini")).lower()
+LLM_MODEL = LLM_CFG.get("model", "gemini-2.5-flash")
+LLM_RPM = int(LLM_CFG.get("requests_per_minute", 15))
 LLM_BATCH_SIZE = int(LLM_CFG.get("batch_size", 3))
 LLM_MAX_RETRIES = int(LLM_CFG.get("max_retries", 3))
 LLM_RETRY_DELAY = float(LLM_CFG.get("retry_delay", 12))
+LLM_OLLAMA_HOST = LLM_CFG.get("ollama_host", "http://localhost:11434")
+
+# Global flag to immediately switch to 0s local mode if quota is reached
+QUOTA_EXHAUSTED_FLAG = [False]
 
 # Construct AI profile criteria dynamically from keywords and exclusions
 keywords_formatted = "\n".join([f"- {k}" for k in KEYWORDS_LIST])
@@ -328,13 +333,109 @@ def evaluate_jobs_batch(client: genai.Client, unparsed_jobs: list[dict], last_re
                 j["eval_result"] = {"match": False, "verdict": f"Excluded due to keyword: {ex}", "short_description": ""}
                 break
 
+def call_llm_api(prompt: str, client: genai.Client, last_request_time: list[float]) -> str:
+    """Dispatches prompt to configured LLM provider (gemini, groq, openrouter, ollama)."""
+    if QUOTA_EXHAUSTED_FLAG[0]:
+        return None
+
+    # Rate limit delay pacing: enforce requests_per_minute quota
+    min_interval = 60.0 / max(1, LLM_RPM)
+    elapsed = time.time() - last_request_time[0]
+    if elapsed < min_interval:
+        sleep_needed = min_interval - elapsed
+        time.sleep(sleep_needed)
+
+    for attempt in range(LLM_MAX_RETRIES + 1):
+        try:
+            last_request_time[0] = time.time()
+            if LLM_PROVIDER == "groq":
+                groq_key = os.getenv("GROQ_API_KEY") or LLM_CFG.get("api_key", "")
+                if not groq_key:
+                    raise Exception("GROQ_API_KEY not found in environment or settings.yaml")
+                url = "https://api.groq.com/openai/v1/chat/completions"
+                headers = {"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"}
+                model_name = LLM_MODEL if LLM_MODEL and "gemini" not in LLM_MODEL else "llama-3.1-8b-instant"
+                payload = {"model": model_name, "messages": [{"role": "user", "content": prompt}], "temperature": 0.2}
+                res = requests.post(url, headers=headers, json=payload, timeout=20)
+                if res.status_code == 200:
+                    return res.json()["choices"][0]["message"]["content"]
+                else:
+                    raise Exception(f"Groq API Error {res.status_code}: {res.text}")
+
+            elif LLM_PROVIDER == "openrouter":
+                or_key = os.getenv("OPENROUTER_API_KEY") or LLM_CFG.get("api_key", "")
+                if not or_key:
+                    raise Exception("OPENROUTER_API_KEY not found in environment or settings.yaml")
+                url = "https://openrouter.ai/api/v1/chat/completions"
+                headers = {"Authorization": f"Bearer {or_key}", "Content-Type": "application/json"}
+                model_name = LLM_MODEL if LLM_MODEL and "gemini" not in LLM_MODEL else "meta-llama/llama-3.1-8b-instruct:free"
+                payload = {"model": model_name, "messages": [{"role": "user", "content": prompt}], "temperature": 0.2}
+                res = requests.post(url, headers=headers, json=payload, timeout=20)
+                if res.status_code == 200:
+                    return res.json()["choices"][0]["message"]["content"]
+                else:
+                    raise Exception(f"OpenRouter API Error {res.status_code}: {res.text}")
+
+            elif LLM_PROVIDER == "ollama":
+                url = f"{LLM_OLLAMA_HOST.rstrip('/')}/api/generate"
+                model_name = LLM_MODEL if LLM_MODEL and "gemini" not in LLM_MODEL else "llama3.2"
+                payload = {"model": model_name, "prompt": prompt, "stream": False}
+                res = requests.post(url, json=payload, timeout=30)
+                if res.status_code == 200:
+                    return res.json().get("response", "")
+                else:
+                    raise Exception(f"Ollama API Error {res.status_code}: {res.text}")
+
+            else:
+                # Default: Gemini API
+                if not client:
+                    return None
+                gen_config = types.GenerateContentConfig(
+                    automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True)
+                )
+                res = client.models.generate_content(
+                    model=LLM_MODEL,
+                    contents=prompt,
+                    config=gen_config
+                )
+                return res.text
+
+        except Exception as e:
+            err_msg = str(e)
+            is_quota_limit = ("429" in err_msg or "ResourceExhausted" in err_msg or "quota" in err_msg.lower() or "rate" in err_msg.lower())
+            
+            if is_quota_limit:
+                QUOTA_EXHAUSTED_FLAG[0] = True
+                print(f"\n[LLM Quota Exceeded] Quota limit reached ({err_msg[:80]}...).", flush=True)
+                print("[LLM Circuit Breaker] Instantly switching to fast local key skills & 30-word summary mode (0s delay for remaining jobs)...\n", flush=True)
+                return None
+            else:
+                print(f"[LLM] Notice: Provider '{LLM_PROVIDER}' notice/error (attempt {attempt + 1}/{LLM_MAX_RETRIES}): {err_msg[:100]}...", flush=True)
+
+    return None
+
+
+def evaluate_jobs_batch(client: genai.Client, unparsed_jobs: list[dict], last_request_time: list[float]):
+    """Evaluates a list of scraped jobs using LLM in batches with request delay pacing and exponential retries."""
+    if not unparsed_jobs:
+        return
+
+    # 1. Local keyword pre-filtering to eliminate obvious non-matches without API calls
+    for j in unparsed_jobs:
+        desc_lower = j.get("desc", "").lower()
+        title_lower = j.get("title", "").lower()
+        for ex in EXCLUDE_LIST:
+            if ex.lower() in desc_lower or ex.lower() in title_lower:
+                j["eval_result"] = {"match": False, "verdict": f"Excluded due to keyword: {ex}", "short_description": ""}
+                break
+
     pending_jobs = [j for j in unparsed_jobs if "eval_result" not in j]
 
-    if not client or not pending_jobs:
+    if not pending_jobs or QUOTA_EXHAUSTED_FLAG[0] or (LLM_PROVIDER == "gemini" and not client):
         for j in pending_jobs:
             j["eval_result"] = {
                 "match": True,
-                "verdict": "MATCH: YES\nREASON: Scraped job matches criteria (LLM evaluation skipped).",
+                "verdict": "MATCH: YES (Local Fallback)",
                 "short_description": extract_skills_summary(j.get("desc", ""), j.get("title", ""))
             }
         return
@@ -343,6 +444,15 @@ def evaluate_jobs_batch(client: genai.Client, unparsed_jobs: list[dict], last_re
     chunk_size = max(1, LLM_BATCH_SIZE)
     for i in range(0, len(pending_jobs), chunk_size):
         batch = pending_jobs[i:i + chunk_size]
+
+        if QUOTA_EXHAUSTED_FLAG[0]:
+            for j in batch:
+                j["eval_result"] = {
+                    "match": True,
+                    "verdict": "MATCH: YES (Local Fallback)",
+                    "short_description": extract_skills_summary(j.get("desc", ""), j.get("title", ""))
+                }
+            continue
 
         prompt_parts = [
             "You are an expert universal career agent. Read and analyze these job postings carefully.",
@@ -374,46 +484,16 @@ REASON: [1 sentence summarizing why it fits or fails]
 
         prompt = "\n".join(prompt_parts)
 
-        # Rate limit delay pacing: enforce requests_per_minute quota
-        min_interval = 60.0 / max(1, LLM_RPM)
-        elapsed = time.time() - last_request_time[0]
-        if elapsed < min_interval:
-            sleep_needed = min_interval - elapsed
-            time.sleep(sleep_needed)
-
-        response_text = None
-        for attempt in range(LLM_MAX_RETRIES + 1):
-            try:
-                last_request_time[0] = time.time()
-                gen_config = types.GenerateContentConfig(
-                    automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True)
-                )
-                res = client.models.generate_content(
-                    model=LLM_MODEL,
-                    contents=prompt,
-                    config=gen_config
-                )
-                response_text = res.text
-                break
-            except Exception as e:
-                err_msg = str(e)
-                is_rate_limit = ("429" in err_msg or "ResourceExhausted" in err_msg or "quota" in err_msg.lower() or "rate" in err_msg.lower())
-                if is_rate_limit and attempt < LLM_MAX_RETRIES:
-                    wait_time = LLM_RETRY_DELAY * (2 ** attempt)
-                    print(f"[LLM Rate Limit] Quota limit reached (attempt {attempt + 1}/{LLM_MAX_RETRIES}). Waiting {wait_time:.1f}s before retrying...", flush=True)
-                    time.sleep(wait_time)
-                else:
-                    print(f"[LLM] Notice: Batch evaluation notice/error: {err_msg[:100]}...", flush=True)
-                    break
+        response_text = call_llm_api(prompt, client, last_request_time)
 
         if response_text:
             parse_batch_response(batch, response_text)
         else:
-            # Fallback if API fails after retries
+            # Instant fallback if quota reached or provider returned error
             for job in batch:
                 job["eval_result"] = {
                     "match": True,
-                    "verdict": "MATCH: YES (Fallback)",
+                    "verdict": "MATCH: YES (Local Fallback)",
                     "short_description": extract_skills_summary(job.get("desc", ""), job.get("title", ""))
                 }
 
@@ -561,10 +641,17 @@ def main():
     tg_chat_id = os.getenv("TELEGRAM_CHAT_ID")
 
     client = None
-    if gemini_api_key:
-        client = genai.Client(api_key=gemini_api_key)
-    else:
-        print("[!] GEMINI_API_KEY not set. Job evaluation will run in fallback mode without LLM filtering.", flush=True)
+    if LLM_PROVIDER == "gemini":
+        if gemini_api_key:
+            client = genai.Client(api_key=gemini_api_key)
+        else:
+            print("[!] GEMINI_API_KEY not set. Job evaluation running in local fallback mode.", flush=True)
+    elif LLM_PROVIDER == "groq":
+        print("[*] LLM Provider set to Groq (Free tier: 14,400 requests/day, 30 RPM).", flush=True)
+    elif LLM_PROVIDER == "openrouter":
+        print("[*] LLM Provider set to OpenRouter.", flush=True)
+    elif LLM_PROVIDER == "ollama":
+        print(f"[*] LLM Provider set to local Ollama ({LLM_OLLAMA_HOST}).", flush=True)
 
     HISTORY_CFG = APP_SETTINGS.get("history", {})
     IGNORE_DAYS = int(os.getenv("IGNORE_DAYS", HISTORY_CFG.get("ignore_days", 7)))
