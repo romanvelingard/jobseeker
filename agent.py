@@ -12,6 +12,7 @@ import yaml
 from dotenv import load_dotenv
 from jobspy import scrape_jobs
 from google import genai
+from google.genai import types
 
 # Ensure UTF-8 output encoding for Windows stdout/stderr to support multi-language characters
 if sys.stdout and hasattr(sys.stdout, "reconfigure"):
@@ -384,7 +385,14 @@ REASON: [1 sentence summarizing why it fits or fails]
         for attempt in range(LLM_MAX_RETRIES + 1):
             try:
                 last_request_time[0] = time.time()
-                res = client.models.generate_content(model=LLM_MODEL, contents=prompt)
+                gen_config = types.GenerateContentConfig(
+                    automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True)
+                )
+                res = client.models.generate_content(
+                    model=LLM_MODEL,
+                    contents=prompt,
+                    config=gen_config
+                )
                 response_text = res.text
                 break
             except Exception as e:
