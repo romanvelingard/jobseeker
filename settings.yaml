@@ -16,9 +16,9 @@ email:
   email_from: "roman.vel@gmail.com"
 
 llm:
-  model: "gemini-3.6-flash"
+  model: "gemini-2.5-flash"
   enabled: true
-  requests_per_minute: 5
+  requests_per_minute: 15
   batch_size: 3
   max_retries: 3
   retry_delay: 12
