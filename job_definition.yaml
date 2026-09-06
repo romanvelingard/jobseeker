@@ -68,7 +68,6 @@ jobs:
 locations:
   - "Israel"
   - "Poland"
-  - "Ukraine"
 
 #Required Skills and keywords
 keywords:
@@ -105,3 +104,4 @@ exclude:
   - "Unpaid internship"
   - "Media buyer"
   - "Real estate buyer"
+  - "Fluent Hebrew"
