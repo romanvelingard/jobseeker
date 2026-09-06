@@ -490,6 +490,7 @@ def step3_filter_exclusions(jobs_list: list[dict], exclude_list: list, job_confi
         title = job.get("title", "")
         title_lower = title.lower()
         desc_lower = job.get("desc", "").lower()
+        loc_lower = job.get("location", "").lower()
 
         # Title role validation check
         if job_config and not is_valid_role_title(title, job_config):
@@ -497,9 +498,20 @@ def step3_filter_exclusions(jobs_list: list[dict], exclude_list: list, job_confi
 
         excluded = False
         for ex in exclude_list:
-            if ex.lower() in desc_lower or ex.lower() in title_lower:
-                excluded = True
-                break
+            ex_lower = ex.lower()
+            if not ex_lower:
+                continue
+
+            # Short exclusion terms (<=3 chars e.g. "vp") use regex word boundary matching
+            if len(ex_lower) <= 3:
+                pattern = r'\b' + re.escape(ex_lower) + r'\b'
+                if re.search(pattern, title_lower) or re.search(pattern, desc_lower) or re.search(pattern, loc_lower):
+                    excluded = True
+                    break
+            else:
+                if ex_lower in desc_lower or ex_lower in title_lower or ex_lower in loc_lower:
+                    excluded = True
+                    break
 
         if not excluded:
             filtered_jobs.append(job)
