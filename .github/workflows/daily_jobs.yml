@@ -43,7 +43,25 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          python -c '
+          import json, subprocess
+          try:
+              remote_content = subprocess.check_output(["git", "show", "origin/main:seen_jobs.json"], text=True)
+              remote_data = json.loads(remote_content)
+          except Exception:
+              remote_data = {}
+          try:
+              with open("seen_jobs.json", "r", encoding="utf-8") as f:
+                  local_data = json.load(f)
+          except Exception:
+              local_data = {}
+          merged = {**remote_data, **local_data}
+          with open("seen_jobs.json", "w", encoding="utf-8") as f:
+              json.dump(merged, f, indent=2, sort_keys=True)
+          '
+          git reset --soft origin/main
           git add seen_jobs.json
-          git diff --staged --quiet || (git commit -m "chore: update seen_jobs history [skip ci]" && git pull --rebase origin main && git push)
+          git diff --staged --quiet || (git commit -m "chore: update seen_jobs history [skip ci]" && git push origin main)
 
 
