@@ -107,6 +107,18 @@ keywords:
   - "Priority"
   - "Remote or Hybrid"
 
+# Preferred Target Industries (High Priority)
+industries:
+  - "Defense"
+  - "Defence"
+  - "Automotive"
+  - "Aerospace"
+  - "Medical"
+  - "Space"
+  - "Defense & Space"
+  - "Medical Devices"
+  - "Aviation"
+
 #Exclude criteria
 exclude:
   - "Unpaid internship"
@@ -127,3 +139,5 @@ exclude:
   - "Talent Partner"
   - "Talent Acquisition Manager"
   - "Talent Sourcing Partner"
+  - "Program Manager"
+

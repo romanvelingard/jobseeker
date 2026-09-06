@@ -109,6 +109,7 @@ APP_SETTINGS = load_yaml_file(SETTINGS_FILE, {
 JOBS_LIST = JOB_CONFIG.get("jobs") if JOB_CONFIG.get("jobs") is not None else []
 LOCATIONS_LIST = JOB_CONFIG.get("locations") if JOB_CONFIG.get("locations") is not None else []
 KEYWORDS_LIST = JOB_CONFIG.get("keywords") if JOB_CONFIG.get("keywords") is not None else []
+INDUSTRIES_LIST = JOB_CONFIG.get("industries") if JOB_CONFIG.get("industries") is not None else []
 EXCLUDE_LIST = JOB_CONFIG.get("exclude") if JOB_CONFIG.get("exclude") is not None else []
 
 # Extract Operational Settings (Env variables take precedence)
@@ -129,12 +130,16 @@ LLM_OLLAMA_HOST = LLM_CFG.get("ollama_host", "http://localhost:11434")
 # Global flag to immediately switch to 0s local mode if quota is reached
 QUOTA_EXHAUSTED_FLAG = [False]
 
-# Construct AI profile criteria dynamically from keywords and exclusions
+# Construct AI profile criteria dynamically from keywords, target industries, and exclusions
 keywords_formatted = "\n".join([f"- {k}" for k in KEYWORDS_LIST])
+industries_formatted = "\n".join([f"- {ind}" for ind in INDUSTRIES_LIST])
 exclude_formatted = "\n".join([f"- Exclude: {e}" for e in EXCLUDE_LIST])
 MY_PROFILE_CRITERIA = f"""
 Target Criteria & Keywords:
 {keywords_formatted}
+
+Preferred Target Industries (High Priority):
+{industries_formatted}
 
 Exclusion Rules:
 {exclude_formatted}
@@ -228,7 +233,7 @@ def send_telegram_message(bot_token: str, chat_id: str, message: str):
         print(f"[Telegram] Error sending message: {e}", flush=True)
 
 def extract_skills_summary(description: str, job_title: str, max_words: int = 30) -> str:
-    """Extracts matched keywords and the first 30 words of job description as a clean fallback summary."""
+    """Extracts matched keywords, target industries, and the first 30 words of job description as a clean fallback summary."""
     if not description or len(description.strip()) == 0:
         return f"Position: {job_title}"
     
@@ -238,44 +243,55 @@ def extract_skills_summary(description: str, job_title: str, max_words: int = 30
     if len(words) > max_words:
         first_n_words += "..."
 
-    # Extract matched keywords from job_definition.yaml
+    # Extract matched keywords and target industries
     found_skills = []
     seen_lower = set()
 
-    for kw in KEYWORDS_LIST:
+    for kw in KEYWORDS_LIST + INDUSTRIES_LIST:
         k_lower = kw.lower()
-        if k_lower not in seen_lower and re.search(r'\b' + re.escape(kw) + r'\b', description, re.IGNORECASE):
+        if k_lower not in seen_lower and re.search(r'\b' + re.escape(kw) + r'\b', description + " " + job_title, re.IGNORECASE):
             found_skills.append(kw)
             seen_lower.add(k_lower)
 
     if found_skills:
         skills_str = ", ".join(found_skills[:6])
-        return f"<strong>Key Skills: {skills_str}</strong> — {first_n_words}"
+        return f"<strong>Key Skills/Industry: {skills_str}</strong> — {first_n_words}"
     else:
         return f"<strong>Overview:</strong> {first_n_words}"
 
 
 def get_job_priority(job: dict) -> tuple[int, int]:
     """Returns priority sorting tuple (rank, original_id):
-    Rank 1: Purchasing / Buyer / Procurement roles in Israel
-    Rank 2: Purchasing / Buyer / Procurement roles in Poland
-    Rank 3: Purchasing / Buyer / Procurement roles in Ukraine
-    Rank 4: All other matched roles
+    Rank 1: Purchasing / Procurement roles in Preferred Target Industries (Defense, Automotive, Aerospace, Medical, Space)
+    Rank 2: Purchasing / Procurement roles in Israel
+    Rank 3: Purchasing / Procurement roles in Poland
+    Rank 4: Purchasing / Procurement roles in Ukraine
+    Rank 5: All other matched roles
     """
     title = job.get("title", "").lower()
     country = job.get("country", "").lower()
+    desc = job.get("short_description", "").lower() + " " + str(job.get("verdict", "")).lower()
 
     buyer_keywords = ["buyer", "purchasing", "procurement", "sourcing", "קניין", "רכש", "zakupów", "kupiec", "закупівель", "постачання"]
     is_buyer_role = any(kw in title for kw in buyer_keywords)
 
-    if is_buyer_role and "israel" in country:
+    # Check preferred industry match (Defense, Automotive, Aerospace, Medical, Space, etc.)
+    has_preferred_industry = False
+    for ind in INDUSTRIES_LIST:
+        if ind.lower() in title or ind.lower() in desc:
+            has_preferred_industry = True
+            break
+
+    if is_buyer_role and has_preferred_industry:
         rank = 1
-    elif is_buyer_role and "poland" in country:
+    elif is_buyer_role and "israel" in country:
         rank = 2
-    elif is_buyer_role and "ukraine" in country:
+    elif is_buyer_role and "poland" in country:
         rank = 3
-    else:
+    elif is_buyer_role and "ukraine" in country:
         rank = 4
+    else:
+        rank = 5
 
     return (rank, job.get("id", 0))
 
