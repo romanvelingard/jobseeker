@@ -119,7 +119,7 @@ SCRAPE_SITES = SCRAPER_CFG.get("sites", ["linkedin"])
 
 LLM_CFG = APP_SETTINGS.get("llm", {})
 LLM_PROVIDER = str(LLM_CFG.get("provider", "gemini")).lower()
-LLM_MODEL = LLM_CFG.get("model", "gemini-2.5-flash")
+LLM_MODEL = LLM_CFG.get("model", "gemini-1.5-flash")
 LLM_RPM = int(LLM_CFG.get("requests_per_minute", 15))
 LLM_BATCH_SIZE = int(LLM_CFG.get("batch_size", 3))
 LLM_MAX_RETRIES = int(LLM_CFG.get("max_retries", 3))

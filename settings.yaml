@@ -17,7 +17,7 @@ email:
 
 llm:
   provider: "gemini"     # Options: "gemini" (Google), "groq" (Free 14,400 req/day), "openrouter" (Free models), "ollama" (Local offline)
-  model: "gemini-2.5-flash"
+  model: "gemini-1.5-flash"
   enabled: true
   requests_per_minute: 15
   batch_size: 3
