@@ -27,6 +27,7 @@ jobs:
         with:
           python-version: '3.12'
           cache: 'pip'
+          cache-dependency-path: 'requirements.txt'
 
       - name: Install dependencies
         run: |
@@ -49,32 +50,33 @@ jobs:
         run: python agent.py
 
       - name: Persist seen jobs history
-        if: always()
+        if: success()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git fetch origin main
-          git checkout -B main origin/main
-          
+
           python -c "
           import json, subprocess
-          remote_data, local_data = {}, {}
-          try:
-              remote_content = subprocess.check_output(['git', 'show', 'origin/main:seen_jobs.json'], text=True)
-              remote_data = json.loads(remote_content)
-          except Exception as e:
-              print(f'Warning loading remote seen_jobs: {e}')
+          local_data, remote_data = {}, {}
           try:
               with open('seen_jobs.json', 'r', encoding='utf-8') as f:
                   local_data = json.load(f)
           except Exception as e:
               print(f'Warning loading local seen_jobs: {e}')
-          
-          if remote_data or local_data:
+
+          try:
+              remote_content = subprocess.check_output(['git', 'show', 'origin/main:seen_jobs.json'], text=True)
+              remote_data = json.loads(remote_content)
+          except Exception as e:
+              print(f'Warning loading remote seen_jobs: {e}')
+
+          if local_data or remote_data:
               merged = {**remote_data, **local_data}
               with open('seen_jobs.json', 'w', encoding='utf-8') as f:
                   json.dump(merged, f, indent=2, sort_keys=True)
           "
-          
+
+          git checkout -B main
           git add seen_jobs.json
           git diff --staged --quiet || (git commit -m "chore: update seen_jobs history [skip ci]" && git push origin main)
