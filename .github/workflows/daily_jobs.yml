@@ -53,30 +53,51 @@ jobs:
         if: success()
         run: |
           git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          
+          # Safely stash local seen_jobs update from agent.py
+          git stash push -m "seen_jobs_update" seen_jobs.json || true
+          
+          # Sync with latest origin/main
           git fetch origin main
-
+          git checkout -B main origin/main
+          
+          # Re-apply local seen_jobs.json
+          git stash pop || true
+          
+          # Merge remote + local seen_jobs with 7-day retention pruning
           python -c "
-          import json, subprocess
-          local_data, remote_data = {}, {}
-          try:
-              with open('seen_jobs.json', 'r', encoding='utf-8') as f:
-                  local_data = json.load(f)
-          except Exception as e:
-              print(f'Warning loading local seen_jobs: {e}')
+          import json, subprocess, os
+          from datetime import datetime, timezone, timedelta
+
+          cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+          remote_data, local_data = {}, {}
+
+          if os.path.exists('seen_jobs.json'):
+              try:
+                  with open('seen_jobs.json', 'r', encoding='utf-8') as f:
+                      local_data = json.load(f)
+              except Exception as e:
+                  print(f'Local read warning: {e}')
 
           try:
-              remote_content = subprocess.check_output(['git', 'show', 'origin/main:seen_jobs.json'], text=True)
-              remote_data = json.loads(remote_content)
+              remote_raw = subprocess.check_output(['git', 'show', 'origin/main:seen_jobs.json'], encoding='utf-8')
+              remote_data = json.loads(remote_raw)
           except Exception as e:
-              print(f'Warning loading remote seen_jobs: {e}')
+              print(f'Remote read warning: {e}')
 
-          if local_data or remote_data:
-              merged = {**remote_data, **local_data}
-              with open('seen_jobs.json', 'w', encoding='utf-8') as f:
-                  json.dump(merged, f, indent=2, sort_keys=True)
+          merged = {**remote_data, **local_data}
+          pruned = {}
+          for url, ts_str in merged.items():
+              try:
+                  if datetime.fromisoformat(ts_str) >= cutoff:
+                      pruned[url] = ts_str
+              except Exception:
+                  pruned[url] = ts_str
+
+          with open('seen_jobs.json', 'w', encoding='utf-8') as f:
+              json.dump(pruned, f, indent=2, sort_keys=True)
           "
 
-          git checkout -B main
           git add seen_jobs.json
           git diff --staged --quiet || (git commit -m "chore: update seen_jobs history [skip ci]" && git push origin main)
