@@ -2,7 +2,7 @@ name: Run Daily LinkedIn Job Agent
 
 on:
   schedule:
-    - cron: '0 0 * * *'
+    - cron: '0 3 * * *'
   workflow_dispatch:
 
 jobs:
@@ -29,6 +29,8 @@ jobs:
       - name: Execute Job Agent
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
           SMTP_PORT: ${{ secrets.SMTP_PORT }}
           SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
@@ -60,7 +62,8 @@ jobs:
           with open("seen_jobs.json", "w", encoding="utf-8") as f:
               json.dump(merged, f, indent=2, sort_keys=True)
           '
-          git reset --soft origin/main
+          git checkout -B main
+          git pull origin main --rebase
           git add seen_jobs.json
           git diff --staged --quiet || (git commit -m "chore: update seen_jobs history [skip ci]" && git push origin main)
 
