@@ -63,7 +63,7 @@ jobs:
               json.dump(merged, f, indent=2, sort_keys=True)
           '
           git checkout -B main
-          git pull origin main --rebase
+          git reset origin/main
           git add seen_jobs.json
           git diff --staged --quiet || (git commit -m "chore: update seen_jobs history [skip ci]" && git push origin main)
 
