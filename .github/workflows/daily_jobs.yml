@@ -5,15 +5,22 @@ on:
     - cron: '0 3 * * *'
   workflow_dispatch:
 
+concurrency:
+  group: daily-job-agent
+  cancel-in-progress: false
+
 jobs:
   run-agent:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     permissions:
       contents: write
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -42,29 +49,32 @@ jobs:
         run: python agent.py
 
       - name: Persist seen jobs history
+        if: always()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git fetch origin main
-          python -c '
+          git checkout -B main origin/main
+          
+          python -c "
           import json, subprocess
+          remote_data, local_data = {}, {}
           try:
-              remote_content = subprocess.check_output(["git", "show", "origin/main:seen_jobs.json"], text=True)
+              remote_content = subprocess.check_output(['git', 'show', 'origin/main:seen_jobs.json'], text=True)
               remote_data = json.loads(remote_content)
-          except Exception:
-              remote_data = {}
+          except Exception as e:
+              print(f'Warning loading remote seen_jobs: {e}')
           try:
-              with open("seen_jobs.json", "r", encoding="utf-8") as f:
+              with open('seen_jobs.json', 'r', encoding='utf-8') as f:
                   local_data = json.load(f)
-          except Exception:
-              local_data = {}
-          merged = {**remote_data, **local_data}
-          with open("seen_jobs.json", "w", encoding="utf-8") as f:
-              json.dump(merged, f, indent=2, sort_keys=True)
-          '
-          git checkout -B main
-          git reset origin/main
+          except Exception as e:
+              print(f'Warning loading local seen_jobs: {e}')
+          
+          if remote_data or local_data:
+              merged = {**remote_data, **local_data}
+              with open('seen_jobs.json', 'w', encoding='utf-8') as f:
+                  json.dump(merged, f, indent=2, sort_keys=True)
+          "
+          
           git add seen_jobs.json
           git diff --staged --quiet || (git commit -m "chore: update seen_jobs history [skip ci]" && git push origin main)
-
-
