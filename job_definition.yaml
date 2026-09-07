@@ -1,8 +1,5 @@
 # Job Definitions & Search Criteria
 # Note: Position titles are automatically scoped by language/script:
-# - Hebrew titles -> searched ONLY in Israel
-# - Polish titles -> searched ONLY in Poland
-# - Ukrainian titles -> searched ONLY in Ukraine
 # - English titles -> searched across ALL active locations in 'locations'
 # You can also explicitly specify locations for any position using structured dict format:
 #   - title: "Specific Role"
@@ -11,12 +8,9 @@
 jobs:
   # Global / English Standard (Scanned in all active locations)
   - "Procurement Specialist"
-  - "Procurement Manager"
-  - "Purchasing Manager"
+  - "Purchasing Specialist"
   - "Strategic Sourcing Specialist"
-  - "Strategic Sourcing Manager"
-  - "Category Manager"
-  - "Vendor Manager"
+  - "Vendor Specialist"
   - "Buyer"
   - "Senior Buyer"
   - "Operational Buyer"
@@ -24,58 +18,16 @@ jobs:
   - "Direct Buyer"
   - "Indirect Buyer"
   - "Supply Chain Specialist"
-  - "Supply Chain Manager"
-  - "Materials Planner"
-  - "Operations Coordinator"
   - "Supplier Coordinator"
   - "Supply Coordinator"
-  - "Sales Coordinator"
-
-  # Hebrew (Auto-scoped to Israel)
-  - "מנהל רכש"
-  - "קניין רכש"
-  - "קניין"
-  - "קניין תפעולי"
-  - "קניין אסטרטגי"
-  - "קניין טכני"
-  - "קניין חו\"ל"
-  - "רכש"
-  - "שרשרת אספקה"
-  - "מנהל שרשרת אספקה"
-  - "רכז תפעול"
-  - "מתאם תפעול"
-  - "מתאם ספקים"
-  - "מתאם מכירות"
-  - "רכז מכירות"
-
-  # Polish (Auto-scoped to Poland)
-  - "Specjalista ds. Zakupów"
-  - "Kierownik ds. Zakupów"
-  - "Kupiec"
-  - "Kupiec Strategiczny"
-  - "Kupiec Operacyjny"
-  - "Kupiec Techniczny"
-  - "Specjalista ds. Zaopatrzenia"
-  - "Specjalista ds. Łańcucha Dostaw"
-  - "Koordynator ds. Operacji"
-  - "Koordynator ds. Dostawców"
-  - "Koordynator ds. Sprzedaży"
-
-  # Ukrainian (Auto-scoped to Ukraine)
-  - "Менеджер із закупівель"
-  - "Фахівець із закупівель"
-  - "Спеціаліст з постачання"
-  - "Категорійний менеджер"
-  - "Менеджер із ЗЕД"
-  - "Менеджер ланцюга постачання"
-  - "Координатор операційної діяльності"
-  - "Координатор постачальників"
-  - "Координатор відділу продажу"
+  - "Vendor Coordinator"
 
 #List Of Locations
 locations:
   - "Israel"
-  - "Poland"
+  - "Europe"
+  - "EMEA"
+  - "USA"
 
 #Required Skills and keywords
 keywords:
@@ -85,11 +37,8 @@ keywords:
   - "Operations"
   - "Vendor Management"
   - "Supplier Management"
-  - "Sales Operations"
   - "Strategic Sourcing"
   - "Category Management"
-  - "Demand Planning"
-  - "Forecasting"
   - "Inventory Control"
   - "Planning"
   - "Tendering"
@@ -105,7 +54,8 @@ keywords:
   - "ERP"
   - "SAP"
   - "Priority"
-  - "Remote or Hybrid"
+  - "Remote" 
+  - "Hybrid"
 
 # Preferred Target Industries (High Priority)
 industries:
@@ -154,9 +104,7 @@ exclude:
   - "VP"
   - "EVP"
   - "SVP"
-  - "סמנכ\"ל"
-  - "סמנכ״ל"
-  - "סגן נשיא"
+
   # North of Israel Locations Exclusions
   - "Haifa"
   - "Yokneam"
@@ -191,27 +139,4 @@ exclude:
   - "Pardes Hanna"
   - "Pardes Hana"
   - "Or Akiva"
-  - "מחוז חיפה"
-  - "חיפה"
-  - "טירת כרמל"
-  - "נשר"
-  - "זכרון יעקב"
-  - "בנימינה"
-  - "פרדס חנה"
-  - "אור עקיבא"
-  - "יקנעם"
-  - "מגדל העמק"
-  - "כרמיאל"
-  - "נצרת"
-  - "עכו"
-  - "נהריה"
-  - "גליל"
-  - "גולן"
-  - "טבריה"
-  - "קריית שמונה"
-  - "צפת"
-  - "עפולה"
-  - "נוף הגליל"
-  - "הקריות"
-  - "צפון"
 
