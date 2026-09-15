@@ -39,7 +39,7 @@ Configuration variables:
 - `SMTP_PORT`: (e.g. `587`)
 - `SMTP_USERNAME`: Sender email address
 - `SMTP_PASSWORD`: Sender email app-specific password
-- `EMAIL_TO`: Recipient email address
+- `EMAIL_TO`: Recipient email address(es) (comma-separated for multiple)
 - `EMAIL_FROM`: Sender address displayed on email
 
 ### 3. Run Locally

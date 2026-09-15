@@ -11,8 +11,8 @@ email:
   smtp_server: "smtp.gmail.com"
   smtp_port: 587
   use_tls: true
-  # Set email recipient or load from EMAIL_TO environment variable
-  email_to: "rommy_rommy@yahoo.com"
+  # Set email recipient(s) or load from EMAIL_TO environment variable (comma-separated or YAML list)
+  email_to: "rommy_rommy@yahoo.com, stasia.ua@gmail.com"
   email_from: "roman.vel@gmail.com"
 
 llm:

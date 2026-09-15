@@ -314,20 +314,28 @@ def send_email_report(subject: str, html_body: str) -> bool:
 
     smtp_username = os.getenv("SMTP_USERNAME")
     smtp_password = os.getenv("SMTP_PASSWORD")
-    email_to = os.getenv("EMAIL_TO") or EMAIL_CFG.get("email_to", "")
+    raw_email_to = os.getenv("EMAIL_TO") or EMAIL_CFG.get("email_to", "")
     email_from = os.getenv("EMAIL_FROM") or EMAIL_CFG.get("email_from", smtp_username)
     use_tls_val = os.getenv("SMTP_USE_TLS") or str(EMAIL_CFG.get("use_tls", True))
     use_tls = str(use_tls_val).lower() in ("true", "1", "yes")
 
-    if not smtp_server or not smtp_username or not smtp_password or not email_to:
+    if isinstance(raw_email_to, list):
+        recipients = [str(addr).strip() for addr in raw_email_to if str(addr).strip()]
+    elif isinstance(raw_email_to, str):
+        recipients = [addr.strip() for addr in raw_email_to.split(",") if addr.strip()]
+    else:
+        recipients = []
+
+    if not smtp_server or not smtp_username or not smtp_password or not recipients:
         print("[Email] SMTP configuration incomplete. Skipping email send.", flush=True)
         print("[Email] Set SMTP_SERVER, SMTP_USERNAME, SMTP_PASSWORD, EMAIL_TO in your .env file to enable email dispatch.", flush=True)
         return False
 
+    to_header = ", ".join(recipients)
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
     msg["From"] = email_from
-    msg["To"] = email_to
+    msg["To"] = to_header
 
     # Attach HTML part
     part_html = MIMEText(html_body, "html", "utf-8")
@@ -339,9 +347,9 @@ def send_email_report(subject: str, html_body: str) -> bool:
         if use_tls:
             server.starttls()
         server.login(smtp_username, smtp_password)
-        server.sendmail(email_from, [email_to], msg.as_string())
+        server.sendmail(email_from, recipients, msg.as_string())
         server.quit()
-        print(f"[+] Email report sent successfully to {email_to}!", flush=True)
+        print(f"[+] Email report sent successfully to {to_header}!", flush=True)
         return True
     except Exception as e:
         print(f"[!] Failed to send email: {e}", flush=True)
