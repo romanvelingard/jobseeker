@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       profile:
-        description: 'Search profile path to execute (e.g. profiles/procurement.yaml) or "all"'
+        description: 'Search profile path to execute (e.g. profiles/procurement.yaml) or "all" (Procurement + QA Director)'
         required: false
         default: 'all'
 
@@ -56,7 +56,7 @@ jobs:
           if [ "${{ github.event.inputs.profile }}" != "" ] && [ "${{ github.event.inputs.profile }}" != "all" ]; then
             python agent.py --profile "${{ github.event.inputs.profile }}"
           else
-            python agent.py --all-profiles
+            python agent.py --profile profiles/procurement.yaml profiles/qa_director.yaml
           fi
 
       - name: Persist seen jobs history
