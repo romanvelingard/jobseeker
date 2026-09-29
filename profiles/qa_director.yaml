@@ -81,6 +81,13 @@ keywords:
   - "Defect management"
   - "Root cause analysis"
   - "RCA"
+  - "Software Quality Assurance"
+  - "Validation protocols"
+  - "SOP"
+  - "AI model validation"
+  - "Validation strategies for AI-driven systems"
+  - "AI model validation"
+  - "Validation strategies for AI-driven systems"
 
   # Process and Delivery
   - "SDLC"
@@ -135,6 +142,14 @@ keywords:
 
   # Domain Terms & Specialized Validation
   - "Radar/perception validation"
+  - "Medical"
+  - "Regulation"
+  - "ISO 13485"
+  - "ISO 14971"
+  - "IEC 62304"
+  - "IVDR"
+  - "MDR"
+  - "GAMP 5"
   - "Sensor fusion testing"
   - "Evaluation metrics"
   - "Hardware-in-the-loop"

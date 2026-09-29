@@ -33,44 +33,68 @@ load_dotenv()
 SEEN_JOBS_FILE = "seen_jobs.json"
 QUOTA_EXHAUSTED_FLAG = [False]
 
-def load_seen_jobs(ignore_days: int = 7) -> tuple[set, dict]:
-    """Loads historical seen job URLs with timestamps and prunes entries older than ignore_days."""
-    seen_map = {}
+def load_seen_jobs(profile_key: str, ignore_days: int = 7) -> tuple[set, dict, dict]:
+    """
+    Loads historical seen job URLs for a specific profile_key and prunes entries older than ignore_days.
+    Supports backward compatibility: automatically migrates legacy flat dict format to profile-keyed dict format.
+    Returns (active_urls_set_for_profile, pruned_profile_map, full_seen_json_data).
+    """
+    full_data = {}
     if os.path.exists(SEEN_JOBS_FILE):
         try:
             with open(SEEN_JOBS_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                if isinstance(data, dict):
-                    seen_map = data
-                elif isinstance(data, list):
-                    # Migration from list format
+                raw_data = json.load(f)
+                if isinstance(raw_data, dict):
+                    # Check if legacy flat dict format where values are ISO timestamp strings
+                    is_legacy_flat = any(isinstance(v, str) for v in raw_data.values())
+                    if is_legacy_flat:
+                        # Migrate flat dictionary to profile-keyed dict format under "procurement"
+                        procurement_dict = {}
+                        for k, v in raw_data.items():
+                            if isinstance(v, str):
+                                procurement_dict[k] = v
+                            elif isinstance(v, dict):
+                                full_data[k] = v
+                        if procurement_dict:
+                            full_data["procurement"] = procurement_dict
+                    else:
+                        full_data = raw_data
+                elif isinstance(raw_data, list):
+                    # Legacy list format migration
                     now_str = datetime.now(timezone.utc).isoformat()
-                    seen_map = {url: now_str for url in data}
+                    full_data = {"procurement": {url: now_str for url in raw_data}}
         except Exception as e:
             print(f"[!] Error loading {SEEN_JOBS_FILE}: {e}", flush=True)
 
+    profile_map = full_data.get(profile_key, {})
+    if not isinstance(profile_map, dict):
+        profile_map = {}
+
     cutoff = datetime.now(timezone.utc) - timedelta(days=ignore_days) if ignore_days > 0 else None
     active_urls = set()
-    pruned_map = {}
+    pruned_profile_map = {}
 
-    for url, ts_str in seen_map.items():
+    for url, ts_str in profile_map.items():
         try:
             ts = datetime.fromisoformat(ts_str)
             if cutoff is None or ts >= cutoff:
                 active_urls.add(url)
-                pruned_map[url] = ts_str
+                pruned_profile_map[url] = ts_str
         except Exception:
             active_urls.add(url)
-            pruned_map[url] = ts_str
+            pruned_profile_map[url] = ts_str
 
-    return active_urls, pruned_map
+    full_data[profile_key] = pruned_profile_map
+    return active_urls, pruned_profile_map, full_data
 
-def save_seen_jobs(seen_map: dict):
-    """Saves timestamped seen job URLs to seen_jobs.json."""
+
+def save_seen_jobs(full_data: dict):
+    """Saves profile-keyed timestamped seen job URLs to seen_jobs.json."""
     try:
         with open(SEEN_JOBS_FILE, "w", encoding="utf-8") as f:
-            json.dump(seen_map, f, indent=2, sort_keys=True)
-        print(f"[+] Saved {len(seen_map)} total historical job URLs to {SEEN_JOBS_FILE}", flush=True)
+            json.dump(full_data, f, indent=2, sort_keys=True)
+        total_urls = sum(len(v) for v in full_data.values() if isinstance(v, dict))
+        print(f"[+] Saved {total_urls} historical job URLs across {len(full_data)} profile(s) to {SEEN_JOBS_FILE}", flush=True)
     except Exception as e:
         print(f"[!] Error saving {SEEN_JOBS_FILE}: {e}", flush=True)
 
@@ -457,10 +481,10 @@ def step1_scrape_all_jobs(job_config: dict, app_settings: dict) -> list[dict]:
     return raw_found_jobs
 
 
-def step2_filter_seen_jobs(found_jobs: list[dict], ignore_days: int) -> tuple[list[dict], set, dict]:
-    """Step 2 & 3: Creates list of found jobs and removes jobs sent already in the last 7 days."""
-    seen_urls, seen_map = load_seen_jobs(ignore_days=ignore_days)
-    print(f"[*] STEP 2 & 3: Loaded {len(seen_urls)} job URLs seen within the last {ignore_days} days.", flush=True)
+def step2_filter_seen_jobs(found_jobs: list[dict], profile_key: str, ignore_days: int) -> tuple[list[dict], set, dict, dict]:
+    """Step 2 & 3: Creates list of found jobs and removes jobs sent already for this profile in the last 7 days."""
+    seen_urls, profile_map, full_seen_data = load_seen_jobs(profile_key=profile_key, ignore_days=ignore_days)
+    print(f"[*] STEP 2 & 3: Loaded {len(seen_urls)} job URLs seen within the last {ignore_days} days for profile '{profile_key}'.", flush=True)
 
     unseen_jobs = []
     run_urls = set()
@@ -473,8 +497,8 @@ def step2_filter_seen_jobs(found_jobs: list[dict], ignore_days: int) -> tuple[li
             run_urls.add(u)
         unseen_jobs.append(job)
 
-    print(f"[+] STEP 2 & 3 Complete: {len(unseen_jobs)} unseen jobs remaining for evaluation.", flush=True)
-    return unseen_jobs, seen_urls, seen_map
+    print(f"[+] STEP 2 & 3 Complete: {len(unseen_jobs)} unseen jobs remaining for profile '{profile_key}'.", flush=True)
+    return unseen_jobs, seen_urls, profile_map, full_seen_data
 
 
 def is_valid_role_title(title: str, job_config: dict) -> bool:
@@ -601,19 +625,19 @@ def step5_select_top_jobs(scored_jobs: list[dict], max_results: int = 30) -> lis
     return final_list
 
 
-def step6_dispatch_reports(final_jobs: list[dict], seen_urls: set, seen_map: dict, ignore_days: int, app_settings: dict, job_config: dict):
-    """Dispatches reports and updates seen_jobs history."""
-    print(f"[*] Dispatching final reports...", flush=True)
+def step6_dispatch_reports(final_jobs: list[dict], profile_key: str, profile_map: dict, full_seen_data: dict, ignore_days: int, app_settings: dict, job_config: dict):
+    """Dispatches reports and updates profile-keyed seen_jobs history."""
+    print(f"[*] Dispatching final reports for profile '{profile_key}'...", flush=True)
     
-    # 1. Update seen_jobs.json history for top selected jobs
+    # 1. Update profile_map history for top selected jobs under this profile key
     now_str = datetime.now(timezone.utc).isoformat()
     for j in final_jobs:
         u = j.get("url")
         if u:
-            seen_urls.add(u)
-            seen_map[u] = now_str
+            profile_map[u] = now_str
 
-    save_seen_jobs(seen_map)
+    full_seen_data[profile_key] = profile_map
+    save_seen_jobs(full_seen_data)
 
     # 2. Build HTML report tailored to profile
     html_report = build_html_report(final_jobs, job_config=job_config)
@@ -654,7 +678,7 @@ def step6_dispatch_reports(final_jobs: list[dict], seen_urls: set, seen_map: dic
             )
             send_telegram_message(tg_token, tg_chat_id, msg)
 
-    print("[+] Pipeline Execution Finished Successfully!", flush=True)
+    print(f"[+] Pipeline Execution Finished Successfully for Profile '{profile_key}'!", flush=True)
 
 
 def run_pipeline(profile_filepath: str, settings_filepath: str = "settings.yaml", cli_email_to: str = None):
@@ -665,8 +689,14 @@ def run_pipeline(profile_filepath: str, settings_filepath: str = "settings.yaml"
 
     job_config, app_settings = load_profile_and_settings(profile_filepath, settings_filepath, cli_email_to)
 
-    profile_name = job_config.get("name", os.path.basename(profile_filepath))
+    base_file = os.path.basename(profile_filepath)
+    profile_key = os.path.splitext(base_file)[0].lower()
+    if profile_key == "job_definition":
+        profile_key = "procurement"
+
+    profile_name = job_config.get("name", base_file)
     recipients = app_settings.get("email", {}).get("email_to", "Not configured")
+    print(f"[*] Profile Key: {profile_key}", flush=True)
     print(f"[*] Profile Name: {profile_name}", flush=True)
     print(f"[*] Recipient Email(s): {recipients}", flush=True)
     print(f"[*] Local HTML Output: {app_settings.get('reports', {}).get('local_filename')}\n", flush=True)
@@ -692,8 +722,8 @@ def run_pipeline(profile_filepath: str, settings_filepath: str = "settings.yaml"
     # 1. Scrape jobs matching search profile criteria
     found_jobs = step1_scrape_all_jobs(job_config, app_settings)
 
-    # 2 & 3. Filter jobs already seen
-    unseen_jobs, seen_urls, seen_map = step2_filter_seen_jobs(found_jobs, ignore_days=ignore_days)
+    # 2 & 3. Filter jobs already seen for this profile
+    unseen_jobs, seen_urls, profile_map, full_seen_data = step2_filter_seen_jobs(found_jobs, profile_key=profile_key, ignore_days=ignore_days)
 
     # 4. Remove jobs matching exclusions or invalid position titles
     candidate_jobs = step3_filter_exclusions(unseen_jobs, exclude_list, job_config)
@@ -704,8 +734,8 @@ def run_pipeline(profile_filepath: str, settings_filepath: str = "settings.yaml"
     # 6. Prepare top selected jobs
     final_jobs = step5_select_top_jobs(scored_jobs, max_results=max_results)
 
-    # Dispatch final reports & persist seen history
-    step6_dispatch_reports(final_jobs, seen_urls, seen_map, ignore_days, app_settings, job_config)
+    # Dispatch final reports & persist profile seen history
+    step6_dispatch_reports(final_jobs, profile_key, profile_map, full_seen_data, ignore_days, app_settings, job_config)
 
     print(f"\n[+] Finished execution for profile: {profile_name}\n", flush=True)
 

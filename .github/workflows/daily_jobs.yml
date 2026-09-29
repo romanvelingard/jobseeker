@@ -96,17 +96,35 @@ jobs:
           except Exception as e:
               print(f'Remote read warning: {e}')
 
-          merged = {**remote_data, **local_data}
-          pruned = {}
-          for url, ts_str in merged.items():
-              try:
-                  if datetime.fromisoformat(ts_str) >= cutoff:
-                      pruned[url] = ts_str
-              except Exception:
-                  pruned[url] = ts_str
+          def normalize(data):
+              if not isinstance(data, dict):
+                  return {}
+              is_legacy = any(isinstance(v, str) for v in data.values())
+              if is_legacy:
+                  return {'procurement': {k: v for k, v in data.items() if isinstance(v, str)}}
+              return data
+
+          norm_remote = normalize(remote_data)
+          norm_local = normalize(local_data)
+
+          all_profiles = set(norm_remote.keys()) | set(norm_local.keys())
+          merged_data = {}
+
+          for p_key in all_profiles:
+              r_map = norm_remote.get(p_key, {})
+              l_map = norm_local.get(p_key, {})
+              combined = {**r_map, **l_map}
+              pruned_map = {}
+              for url, ts_str in combined.items():
+                  try:
+                      if datetime.fromisoformat(ts_str) >= cutoff:
+                          pruned_map[url] = ts_str
+                  except Exception:
+                      pruned_map[url] = ts_str
+              merged_data[p_key] = pruned_map
 
           with open('seen_jobs.json', 'w', encoding='utf-8') as f:
-              json.dump(pruned, f, indent=2, sort_keys=True)
+              json.dump(merged_data, f, indent=2, sort_keys=True)
           "
 
           git add seen_jobs.json
