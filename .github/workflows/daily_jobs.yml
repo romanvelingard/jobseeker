@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: '5 5 * * *'
   workflow_dispatch:
+    inputs:
+      profile:
+        description: 'Search profile path to execute (e.g. profiles/procurement.yaml) or "all"'
+        required: false
+        default: 'all'
 
 concurrency:
   group: daily-job-agent
@@ -47,7 +52,12 @@ jobs:
           EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python agent.py
+        run: |
+          if [ "${{ github.event.inputs.profile }}" != "" ] && [ "${{ github.event.inputs.profile }}" != "all" ]; then
+            python agent.py --profile "${{ github.event.inputs.profile }}"
+          else
+            python agent.py --all-profiles
+          fi
 
       - name: Persist seen jobs history
         if: success()

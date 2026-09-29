@@ -1,11 +1,15 @@
-# Job Definitions & Search Criteria Profile
+# Search Profile: Procurement & Supply Chain
 name: "Procurement & Supply Chain Specialist"
+
+# Recipient Email(s) for this profile (comma-separated string or YAML list)
 email_to: "rommy_rommy@yahoo.com, stasia.ua@gmail.com"
 email_subject_prefix: "🎯 [Procurement]"
+
+# Local HTML report filename for offline preview
 local_filename: "jobs_report_procurement.html"
 
+# Job Titles / Roles to scan
 jobs:
-  # Global / English Standard (Scanned in all active locations)
   - "Procurement Specialist"
   - "Purchasing Specialist"
   - "Strategic Sourcing Specialist"
@@ -21,14 +25,14 @@ jobs:
   - "Supply Coordinator"
   - "Vendor Coordinator"
 
-#List Of Locations
+# Target Locations
 locations:
   - "Israel"
   - "Europe"
   - "EMEA"
   - "USA"
 
-#Required Skills and keywords
+# Required skills and keywords
 keywords:
   - "Procurement"
   - "Purchasing"
@@ -53,10 +57,10 @@ keywords:
   - "ERP"
   - "SAP"
   - "Priority"
-  - "Remote" 
+  - "Remote"
   - "Hybrid"
 
-# Preferred Target Industries (High Priority)
+# Preferred Target Industries
 industries:
   - "Defense"
   - "Defence"
@@ -68,7 +72,7 @@ industries:
   - "Medical Devices"
   - "Aviation"
 
-#Exclude criteria
+# Exclusion criteria
 exclude:
   - "Unpaid internship"
   - "Media buyer"
@@ -97,14 +101,11 @@ exclude:
   - "Product Group"
   - "Security Research"
   - "R&D Manager"
-  # VP / Executive Exclusions
   - "Vice President"
   - "Vice-President"
   - "VP"
   - "EVP"
   - "SVP"
-
-  # North of Israel Locations Exclusions
   - "Haifa"
   - "Yokneam"
   - "Yokne'am"
@@ -138,4 +139,3 @@ exclude:
   - "Pardes Hanna"
   - "Pardes Hana"
   - "Or Akiva"
-

@@ -4,6 +4,8 @@ import json
 import re
 import smtplib
 import time
+import argparse
+import glob
 from datetime import datetime, timezone, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -28,9 +30,8 @@ load_dotenv()
 # ==========================================
 # 1. LOAD CONFIGURATION FILES & HISTORY
 # ==========================================
-JOB_DEF_FILE = "job_definition.yaml"
-SETTINGS_FILE = "settings.yaml"
 SEEN_JOBS_FILE = "seen_jobs.json"
+QUOTA_EXHAUSTED_FLAG = [False]
 
 def load_seen_jobs(ignore_days: int = 7) -> tuple[set, dict]:
     """Loads historical seen job URLs with timestamps and prunes entries older than ignore_days."""
@@ -90,47 +91,70 @@ def load_yaml_file(filepath: str, default_dict: dict) -> dict:
         print(f"[!] Warning: Configuration file {filepath} not found. Using defaults.", flush=True)
     return data
 
-# Load Job Definition Criteria from job_definition.yaml
-JOB_CONFIG = load_yaml_file(JOB_DEF_FILE, {
-    "jobs": [],
-    "locations": [],
-    "keywords": [],
-    "industries": [],
-    "exclude": []
-})
 
-# Load Operational & Application Settings
-APP_SETTINGS = load_yaml_file(SETTINGS_FILE, {
-    "scraper": {"sites": ["linkedin"], "hours_old": 24, "results_wanted": 20},
-    "email": {"smtp_server": "smtp.gmail.com", "smtp_port": 587, "use_tls": True, "email_to": "", "email_from": ""},
-    "llm": {"model": "gemini-1.5-flash", "enabled": True},
-    "reports": {"save_local_html": True, "local_filename": "jobs_report.html"}
-})
+def load_profile_and_settings(profile_filepath: str, settings_filepath: str = "settings.yaml", cli_email_to: str = None) -> tuple[dict, dict]:
+    """
+    Loads application settings and job definition search profile.
+    Merges profile-specific parameters such as recipient email(s), email subject prefix, and HTML report output filename.
+    """
+    default_settings = {
+        "scraper": {"sites": ["linkedin"], "hours_old": 24, "results_wanted": 20},
+        "email": {"smtp_server": "smtp.gmail.com", "smtp_port": 587, "use_tls": True, "email_to": "", "email_from": ""},
+        "llm": {"model": "gemini-1.5-flash", "enabled": True},
+        "reports": {"save_local_html": True, "local_filename": "jobs_report.html"},
+        "history": {"ignore_days": 7}
+    }
+    app_settings = load_yaml_file(settings_filepath, default_settings)
 
-# Extract Job Criteria
-JOBS_LIST = JOB_CONFIG.get("jobs") if JOB_CONFIG.get("jobs") is not None else []
-LOCATIONS_LIST = JOB_CONFIG.get("locations") if JOB_CONFIG.get("locations") is not None else []
-KEYWORDS_LIST = JOB_CONFIG.get("keywords") if JOB_CONFIG.get("keywords") is not None else []
-INDUSTRIES_LIST = JOB_CONFIG.get("industries") if JOB_CONFIG.get("industries") is not None else []
-EXCLUDE_LIST = JOB_CONFIG.get("exclude") if JOB_CONFIG.get("exclude") is not None else []
+    default_job_config = {
+        "name": "",
+        "jobs": [],
+        "locations": [],
+        "keywords": [],
+        "industries": [],
+        "exclude": []
+    }
+    job_config = load_yaml_file(profile_filepath, default_job_config)
 
-# Extract Operational Settings (Env variables take precedence)
-SCRAPER_CFG = APP_SETTINGS.get("scraper", {})
-HOURS_OLD = int(os.getenv("HOURS_OLD", SCRAPER_CFG.get("hours_old", 24)))
-RESULTS_WANTED = int(os.getenv("RESULTS_WANTED", SCRAPER_CFG.get("results_wanted", 20)))
-SCRAPE_SITES = SCRAPER_CFG.get("sites", ["linkedin"])
+    # Recipient email resolution hierarchy:
+    # 1. CLI explicit argument (--email-to)
+    # 2. Search profile YAML file (email_to / recipients / email.email_to)
+    # 3. Environment variable EMAIL_TO
+    # 4. settings.yaml email.email_to
+    profile_email_to = (
+        job_config.get("email_to")
+        or job_config.get("recipients")
+        or (job_config.get("email", {}).get("email_to") if isinstance(job_config.get("email"), dict) else None)
+    )
 
-LLM_CFG = APP_SETTINGS.get("llm", {})
-LLM_PROVIDER = str(LLM_CFG.get("provider", "gemini")).lower()
-LLM_MODEL = LLM_CFG.get("model", "gemini-1.5-flash")
-LLM_RPM = int(LLM_CFG.get("requests_per_minute", 15))
-LLM_BATCH_SIZE = int(LLM_CFG.get("batch_size", 3))
-LLM_MAX_RETRIES = int(LLM_CFG.get("max_retries", 3))
-LLM_RETRY_DELAY = float(LLM_CFG.get("retry_delay", 12))
-LLM_OLLAMA_HOST = LLM_CFG.get("ollama_host", "http://localhost:11434")
+    resolved_email_to = None
+    if cli_email_to:
+        resolved_email_to = cli_email_to
+    elif profile_email_to:
+        resolved_email_to = profile_email_to
+    elif os.getenv("EMAIL_TO"):
+        resolved_email_to = os.getenv("EMAIL_TO")
+    else:
+        resolved_email_to = app_settings.get("email", {}).get("email_to", "")
 
-# Global flag to immediately switch to 0s local mode if quota is reached
-QUOTA_EXHAUSTED_FLAG = [False]
+    email_cfg = app_settings.get("email", {}).copy()
+    email_cfg["email_to"] = resolved_email_to
+    app_settings["email"] = email_cfg
+
+    # Resolve local HTML report filename
+    profile_filename = (
+        job_config.get("local_filename")
+        or (job_config.get("reports", {}).get("local_filename") if isinstance(job_config.get("reports"), dict) else None)
+    )
+    if not profile_filename:
+        base_name = os.path.splitext(os.path.basename(profile_filepath))[0]
+        profile_filename = f"jobs_report_{base_name}.html"
+
+    reports_cfg = app_settings.get("reports", {}).copy()
+    reports_cfg["local_filename"] = profile_filename
+    app_settings["reports"] = reports_cfg
+
+    return job_config, app_settings
 
 
 def parse_job_entries(job_config: dict) -> list[dict]:
@@ -168,14 +192,7 @@ def parse_job_entries(job_config: dict) -> list[dict]:
 
 def resolve_target_locations(entry: dict, global_locations: list[str]) -> list[str]:
     """
-    Resolves the exact target locations for a job entry.
-    If explicit locations are defined in entry, uses those.
-    Otherwise, uses script/language detection:
-      - Hebrew script -> Israel
-      - Cyrillic script -> Ukraine
-      - Polish script/keywords -> Poland
-      - Global/English -> global_locations
-    Filters resolved locations against global_locations if global_locations is specified.
+    Resolves exact target locations for a job entry based on explicit setting or language script detection.
     """
     explicit_locs = entry.get("locations")
     if explicit_locs and isinstance(explicit_locs, list):
@@ -221,8 +238,8 @@ def send_telegram_message(bot_token: str, chat_id: str, message: str):
         print(f"[Telegram] Error sending message: {e}", flush=True)
 
 
-def build_html_report(matched_jobs: list) -> str:
-    """Generates an HTML report containing a responsive table: ID, Position Name, Company, Location, Country, Short Description, Link."""
+def build_html_report(matched_jobs: list, job_config: dict = None) -> str:
+    """Generates an HTML report containing a responsive table tailored to the active profile."""
     table_rows = []
     for job in matched_jobs:
         job_id = job.get("id", "")
@@ -254,8 +271,24 @@ def build_html_report(matched_jobs: list) -> str:
     </tr>
     """
 
-    jobs_str = ", ".join(JOBS_LIST)
-    locations_str = ", ".join(LOCATIONS_LIST)
+    jobs_list = []
+    locations_list = []
+    profile_name = ""
+    if job_config:
+        profile_name = job_config.get("name", "")
+        raw_jobs = job_config.get("jobs", []) or []
+        for item in raw_jobs:
+            jt = item.get("title") if isinstance(item, dict) else str(item)
+            if jt:
+                jobs_list.append(jt)
+        locations_list = job_config.get("locations", []) or []
+
+    jobs_str = ", ".join(jobs_list[:5]) + (f" (+{len(jobs_list)-5} more)" if len(jobs_list) > 5 else "") if jobs_list else "All Configured Roles"
+    locations_str = ", ".join(locations_list) if locations_list else "All Active Locations"
+
+    header_title = f"🎯 Daily Job Vacancies Report"
+    if profile_name:
+        header_title += f" — {profile_name}"
 
     html = f"""
     <!DOCTYPE html>
@@ -263,12 +296,12 @@ def build_html_report(matched_jobs: list) -> str:
     <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Daily Job Vacancies Report</title>
+        <title>{header_title}</title>
     </head>
     <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f9fafb; margin: 0; padding: 10px;">
         <div style="width: 100%; max-width: 1000px; margin: 0 auto; background: #ffffff; border-radius: 8px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); border: 1px solid #e5e7eb; box-sizing: border-box;">
             <div style="background: linear-gradient(135deg, #1e3a8a 0%, #2563eb 100%); color: #ffffff; padding: 20px; text-align: center; border-top-left-radius: 8px; border-top-right-radius: 8px;">
-                <h1 style="margin: 0; font-size: 20px; font-weight: 700;">🎯 Daily Job Vacancies Report</h1>
+                <h1 style="margin: 0; font-size: 20px; font-weight: 700;">{header_title}</h1>
                 <p style="margin: 6px 0 0 0; font-size: 13px; opacity: 0.9;">Found {len(matched_jobs)} matching positions for <strong>{jobs_str}</strong> in <strong>{locations_str}</strong></p>
             </div>
             
@@ -301,9 +334,9 @@ def build_html_report(matched_jobs: list) -> str:
     return html
 
 
-def send_email_report(subject: str, html_body: str) -> bool:
-    """Sends HTML email report via SMTP using settings.yaml defaults & env variable overrides."""
-    EMAIL_CFG = APP_SETTINGS.get("email", {})
+def send_email_report(subject: str, html_body: str, app_settings: dict) -> bool:
+    """Sends HTML email report via SMTP using settings & env variable overrides."""
+    EMAIL_CFG = app_settings.get("email", {}) if app_settings else {}
     smtp_server = os.getenv("SMTP_SERVER") or EMAIL_CFG.get("smtp_server", "smtp.gmail.com")
     
     smtp_port_raw = os.getenv("SMTP_PORT")
@@ -314,7 +347,7 @@ def send_email_report(subject: str, html_body: str) -> bool:
 
     smtp_username = os.getenv("SMTP_USERNAME")
     smtp_password = os.getenv("SMTP_PASSWORD")
-    raw_email_to = os.getenv("EMAIL_TO") or EMAIL_CFG.get("email_to", "")
+    raw_email_to = EMAIL_CFG.get("email_to", "") or os.getenv("EMAIL_TO", "")
     email_from = os.getenv("EMAIL_FROM") or EMAIL_CFG.get("email_from", smtp_username)
     use_tls_val = os.getenv("SMTP_USE_TLS") or str(EMAIL_CFG.get("use_tls", True))
     use_tls = str(use_tls_val).lower() in ("true", "1", "yes")
@@ -327,8 +360,8 @@ def send_email_report(subject: str, html_body: str) -> bool:
         recipients = []
 
     if not smtp_server or not smtp_username or not smtp_password or not recipients:
-        print("[Email] SMTP configuration incomplete. Skipping email send.", flush=True)
-        print("[Email] Set SMTP_SERVER, SMTP_USERNAME, SMTP_PASSWORD, EMAIL_TO in your .env file to enable email dispatch.", flush=True)
+        print("[Email] SMTP configuration incomplete or recipients missing. Skipping email send.", flush=True)
+        print(f"[Email] Current configuration -> SMTP_SERVER: {smtp_server}, USERNAME: {smtp_username}, Recipients: {recipients}", flush=True)
         return False
 
     to_header = ", ".join(recipients)
@@ -440,22 +473,18 @@ def step2_filter_seen_jobs(found_jobs: list[dict], ignore_days: int) -> tuple[li
             run_urls.add(u)
         unseen_jobs.append(job)
 
-    print(f"[+] STEP 2 & 3 Complete: Filtered out {len(found_jobs) - len(unseen_jobs)} seen/duplicate jobs. Remaining = {len(unseen_jobs)}", flush=True)
+    print(f"[+] STEP 2 & 3 Complete: {len(unseen_jobs)} unseen jobs remaining for evaluation.", flush=True)
     return unseen_jobs, seen_urls, seen_map
 
 
 def is_valid_role_title(title: str, job_config: dict) -> bool:
-    """
-    Validates that the job title contains relevant position/role keywords.
-    Filters out irrelevant roles (e.g. Product Manager, Security Researcher, Software Engineer)
-    whose description text merely mentions procurement or purchasing terms.
-    """
+    """Filters out irrelevant roles whose description text merely mentions target terms."""
     if not title:
         return False
 
     t_lower = title.lower()
 
-    # 1. Direct match with any target job title in job_definition.yaml
+    # 1. Direct match with any target job title in job_config
     raw_jobs = job_config.get("jobs", []) or []
     for item in raw_jobs:
         jt = item.get("title") if isinstance(item, dict) else str(item)
@@ -469,7 +498,7 @@ def is_valid_role_title(title: str, job_config: dict) -> bool:
         if kw and len(kw) > 3 and kw.lower() in t_lower:
             return True
 
-    # 3. Comprehensive domain role keywords in TITLE (Procurement, Supply Chain, Operations, Logistics, Planning, Commercial)
+    # 3. Comprehensive domain role keywords in TITLE
     role_keywords = [
         "procurement", "purchasing", "sourcing", "buyer", "kupiec", "zakupów", "zaopatrzenia",
         "קניין", "רכש", "שרשרת אספקה", "закупівель", "постачання",
@@ -479,7 +508,8 @@ def is_valid_role_title(title: str, job_config: dict) -> bool:
         "תפעול", "לוגיסטיקה", "מלאי", "ספקים",
         "operations coordinator", "supplier coordinator", "supply coordinator", "sales coordinator",
         "רכז תפעול", "מתאם תפעול", "מתאם ספקים", "מתאם מכירות", "רכז מכירות",
-        "koordynator", "specjalista", "kierownik"
+        "koordynator", "specjalista", "kierownik",
+        "qa", "automation", "test", "testing", "developer", "engineer", "software", "devops", "cloud", "backend"
     ]
 
     for rk in role_keywords:
@@ -530,15 +560,15 @@ def step3_filter_exclusions(jobs_list: list[dict], exclude_list: list, job_confi
 
 def step4_score_jobs(jobs_list: list[dict], client: genai.Client, job_config: dict, app_settings: dict, last_request_time: list[float], quota_exhausted_flag: list[bool]) -> list[dict]:
     """Step 5: Gives score for each job left by country and by industry via dedicated scorer module."""
-    print(f"[*] STEP 5: Scoring {len(jobs_list)} candidate jobs by country & industry via dedicated scorer.py module...", flush=True)
+    print(f"[*] STEP 5: Scoring {len(jobs_list)} candidate jobs by country & industry...", flush=True)
     scored = score_jobs(client, jobs_list, job_config, app_settings, last_request_time, quota_exhausted_flag)
     print(f"[+] STEP 5 Complete: Scored {len(scored)} jobs.", flush=True)
     return scored
 
 
 def step5_select_top_jobs(scored_jobs: list[dict], max_results: int = 30) -> list[dict]:
-    """Step 6: Prepares final list ordered by country tier (Israel first, Poland second, Others third) and composite score."""
-    print(f"[*] STEP 6: Selecting top {max_results} jobs (Israel first, Poland second, Others third)...", flush=True)
+    """Step 6: Prepares final list ordered by country tier and composite score."""
+    print(f"[*] STEP 6: Selecting top {max_results} jobs...", flush=True)
     
     def get_country_tier(c_str: str) -> int:
         c = str(c_str or "").lower()
@@ -571,7 +601,7 @@ def step5_select_top_jobs(scored_jobs: list[dict], max_results: int = 30) -> lis
     return final_list
 
 
-def step6_dispatch_reports(final_jobs: list[dict], seen_urls: set, seen_map: dict, ignore_days: int):
+def step6_dispatch_reports(final_jobs: list[dict], seen_urls: set, seen_map: dict, ignore_days: int, app_settings: dict, job_config: dict):
     """Dispatches reports and updates seen_jobs history."""
     print(f"[*] Dispatching final reports...", flush=True)
     
@@ -585,11 +615,11 @@ def step6_dispatch_reports(final_jobs: list[dict], seen_urls: set, seen_map: dic
 
     save_seen_jobs(seen_map)
 
-    # 2. Build HTML report
-    html_report = build_html_report(final_jobs)
+    # 2. Build HTML report tailored to profile
+    html_report = build_html_report(final_jobs, job_config=job_config)
 
     # 3. Save local HTML report if configured
-    reports_cfg = APP_SETTINGS.get("reports", {})
+    reports_cfg = app_settings.get("reports", {})
     if reports_cfg.get("save_local_html", True):
         filename = reports_cfg.get("local_filename", "jobs_report.html")
         report_filepath = os.path.abspath(filename)
@@ -599,12 +629,15 @@ def step6_dispatch_reports(final_jobs: list[dict], seen_urls: set, seen_map: dic
 
     # 4. Dispatch Email Report
     today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    if final_jobs:
-        subject = f"🎯 Daily Job Vacancies: {len(final_jobs)} new matches for {today_str}"
-    else:
-        subject = f"ℹ️ Daily Job Vacancies: No new matches for {today_str}"
+    profile_prefix = job_config.get("email_subject_prefix") or (f"[{job_config.get('name')}]" if job_config.get("name") else "")
+    prefix_str = f"{profile_prefix} " if profile_prefix else ""
 
-    send_email_report(subject, html_report)
+    if final_jobs:
+        subject = f"🎯 {prefix_str}Daily Job Vacancies: {len(final_jobs)} new matches for {today_str}".strip()
+    else:
+        subject = f"ℹ️ {prefix_str}Daily Job Vacancies: No new matches for {today_str}".strip()
+
+    send_email_report(subject, html_report, app_settings=app_settings)
 
     # 5. Dispatch Telegram Notifications
     tg_token = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -624,45 +657,133 @@ def step6_dispatch_reports(final_jobs: list[dict], seen_urls: set, seen_map: dic
     print("[+] Pipeline Execution Finished Successfully!", flush=True)
 
 
-def main():
+def run_pipeline(profile_filepath: str, settings_filepath: str = "settings.yaml", cli_email_to: str = None):
+    """Executes full search and report dispatch pipeline for a single profile."""
+    print(f"\n========================================================", flush=True)
+    print(f"🚀 STARTING PIPELINE RUN FOR PROFILE: {profile_filepath}", flush=True)
+    print(f"========================================================\n", flush=True)
+
+    job_config, app_settings = load_profile_and_settings(profile_filepath, settings_filepath, cli_email_to)
+
+    profile_name = job_config.get("name", os.path.basename(profile_filepath))
+    recipients = app_settings.get("email", {}).get("email_to", "Not configured")
+    print(f"[*] Profile Name: {profile_name}", flush=True)
+    print(f"[*] Recipient Email(s): {recipients}", flush=True)
+    print(f"[*] Local HTML Output: {app_settings.get('reports', {}).get('local_filename')}\n", flush=True)
+
+    llm_cfg = app_settings.get("llm", {})
+    llm_provider = str(llm_cfg.get("provider", "gemini")).lower()
     gemini_api_key = os.getenv("GEMINI_API_KEY")
     client = None
-    if LLM_PROVIDER == "gemini":
+    if llm_provider == "gemini":
         if gemini_api_key:
             client = genai.Client(api_key=gemini_api_key)
         else:
             print("[!] GEMINI_API_KEY not set. Job evaluation running in local fallback mode.", flush=True)
-    elif LLM_PROVIDER == "groq":
-        print("[*] LLM Provider set to Groq (Free tier: 14,400 requests/day, 30 RPM).", flush=True)
-    elif LLM_PROVIDER == "openrouter":
-        print("[*] LLM Provider set to OpenRouter.", flush=True)
-    elif LLM_PROVIDER == "ollama":
-        print(f"[*] LLM Provider set to local Ollama ({LLM_OLLAMA_HOST}).", flush=True)
 
-    history_cfg = APP_SETTINGS.get("history", {})
+    history_cfg = app_settings.get("history", {})
     ignore_days = int(os.getenv("IGNORE_DAYS", history_cfg.get("ignore_days", 7)))
-    max_results = int(os.getenv("RESULTS_WANTED", 30))
+    scraper_cfg = app_settings.get("scraper", {})
+    max_results = int(os.getenv("RESULTS_WANTED", scraper_cfg.get("results_wanted", 30)))
 
+    exclude_list = job_config.get("exclude", []) or []
     last_request_time = [0.0]
 
-    # --- SW PIPELINE EXECUTION ---
-    # 1. load job_definition file and perform search according to job list.
-    found_jobs = step1_scrape_all_jobs(JOB_CONFIG, APP_SETTINGS)
+    # 1. Scrape jobs matching search profile criteria
+    found_jobs = step1_scrape_all_jobs(job_config, app_settings)
 
-    # 2 & 3. create list of all found jobs & remove jobs sent already in last 7 days
+    # 2 & 3. Filter jobs already seen
     unseen_jobs, seen_urls, seen_map = step2_filter_seen_jobs(found_jobs, ignore_days=ignore_days)
 
-    # 4. remove jobs with exclusion and non-matching job titles
-    candidate_jobs = step3_filter_exclusions(unseen_jobs, EXCLUDE_LIST, JOB_CONFIG)
+    # 4. Remove jobs matching exclusions or invalid position titles
+    candidate_jobs = step3_filter_exclusions(unseen_jobs, exclude_list, job_config)
 
-    # 5. give score for each job which left - by country, by industry (separate module scorer.py)
-    scored_jobs = step4_score_jobs(candidate_jobs, client, JOB_CONFIG, APP_SETTINGS, last_request_time, QUOTA_EXHAUSTED_FLAG)
+    # 5. Score candidate jobs
+    scored_jobs = step4_score_jobs(candidate_jobs, client, job_config, app_settings, last_request_time, QUOTA_EXHAUSTED_FLAG)
 
-    # 6. prepare final list according to the defined number of jobs
+    # 6. Prepare top selected jobs
     final_jobs = step5_select_top_jobs(scored_jobs, max_results=max_results)
 
-    # Dispatch final reports & persist history
-    step6_dispatch_reports(final_jobs, seen_urls, seen_map, ignore_days=ignore_days)
+    # Dispatch final reports & persist seen history
+    step6_dispatch_reports(final_jobs, seen_urls, seen_map, ignore_days, app_settings, job_config)
+
+    print(f"\n[+] Finished execution for profile: {profile_name}\n", flush=True)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Job Seeker Multi-Profile Automated Finder")
+    parser.add_argument(
+        "-p", "--profile", "--job-def", "--config",
+        nargs="*",
+        dest="profiles",
+        help="Path to search profile YAML file(s) or directory. Can pass multiple profiles."
+    )
+    parser.add_argument(
+        "-a", "--all-profiles",
+        action="store_true",
+        help="Run all search profile YAML files located inside profiles/ directory."
+    )
+    parser.add_argument(
+        "-s", "--settings",
+        default="settings.yaml",
+        help="Path to global application settings YAML file (default: settings.yaml)."
+    )
+    parser.add_argument(
+        "-e", "--email-to",
+        help="Override recipient email address(es) for this run (comma-separated)."
+    )
+    args = parser.parse_args()
+
+    profiles_to_run = []
+
+    if args.all_profiles:
+        if os.path.exists("profiles"):
+            profiles_to_run = sorted(glob.glob("profiles/*.yaml") + glob.glob("profiles/*.yml"))
+        if not profiles_to_run:
+            print("[!] Warning: --all-profiles specified but no YAML files found in profiles/ directory.", flush=True)
+    elif args.profiles:
+        for item in args.profiles:
+            if os.path.isdir(item):
+                profiles_to_run.extend(sorted(glob.glob(os.path.join(item, "*.yaml")) + glob.glob(os.path.join(item, "*.yml"))))
+            elif os.path.exists(item):
+                profiles_to_run.append(item)
+            else:
+                print(f"[!] Warning: Profile file '{item}' not found.", flush=True)
+    else:
+        # Default behavior when no profile arguments are specified:
+        env_job_def = os.getenv("JOB_DEF_FILE")
+        if env_job_def and os.path.exists(env_job_def):
+            profiles_to_run.append(env_job_def)
+        elif os.path.exists("profiles"):
+            found = sorted(glob.glob("profiles/*.yaml") + glob.glob("profiles/*.yml"))
+            if found:
+                profiles_to_run = found
+
+        if not profiles_to_run:
+            if os.path.exists("job_definition.yaml"):
+                profiles_to_run.append("job_definition.yaml")
+            else:
+                print("[!] Error: No search profile configuration files found.", flush=True)
+                return
+
+    # Deduplicate profile paths while preserving order
+    seen_paths = set()
+    unique_profiles = []
+    for path in profiles_to_run:
+        norm = os.path.abspath(path)
+        if norm not in seen_paths:
+            seen_paths.add(norm)
+            unique_profiles.append(path)
+
+    print(f"[*] Identified {len(unique_profiles)} search profile(s) to execute:", flush=True)
+    for p in unique_profiles:
+        print(f"    - {p}", flush=True)
+
+    for profile_path in unique_profiles:
+        try:
+            run_pipeline(profile_path, settings_filepath=args.settings, cli_email_to=args.email_to)
+        except Exception as e:
+            print(f"[!] Error running profile '{profile_path}': {e}", flush=True)
 
 
 if __name__ == "__main__":

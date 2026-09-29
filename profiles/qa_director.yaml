@@ -1,10 +1,14 @@
-# Job Definitions & Search Criteria Profile: QA Leadership (Roman)
+# Search Profile: QA Leadership (Director / VP / Senior Manager)
 name: "QA Leadership & Director"
+
+# Recipient Email(s) for this profile
 email_to: "roman.vel@gmail.com"
 email_subject_prefix: "🚀 [QA Leadership]"
-local_filename: "jobs_report_roman.html"
 
-# List of Job Titles / Roles (English & Hebrew senior QA leadership roles)
+# Local HTML report filename for offline preview
+local_filename: "jobs_report_qa_director.html"
+
+# Job Titles / Roles to scan (English & Hebrew senior QA leadership roles)
 jobs:
   - "QA Director"
   - "Director of Quality Assurance"
@@ -165,6 +169,10 @@ industries:
   - "Cybersecurity"
   - "Fintech"
   - "SaaS"
+  - "Automotive"
+  - "Aerospace"
+  - "Defense"
+  - "Medical Devices"
 
 # Exclusion criteria
 exclude:
