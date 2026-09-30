@@ -548,6 +548,9 @@ def step3_filter_exclusions(jobs_list: list[dict], exclude_list: list, job_confi
     print(f"[*] STEP 4: Applying {len(exclude_list)} exclusion rules & position title validation...", flush=True)
     filtered_jobs = []
 
+    # Dealbreaker terms that apply to job description as well as title
+    desc_dealbreakers = {"unpaid", "internship", "student", "pure manual", "unpaid internship", "north district", "northern district"}
+
     for job in jobs_list:
         title = job.get("title", "")
         title_lower = title.lower()
@@ -564,14 +567,19 @@ def step3_filter_exclusions(jobs_list: list[dict], exclude_list: list, job_confi
             if not ex_lower:
                 continue
 
-            # Short exclusion terms (<=3 chars e.g. "vp") use regex word boundary matching
+            # Short exclusion terms (<=3 chars e.g. "vp") use regex word boundary matching on title/location
             if len(ex_lower) <= 3:
                 pattern = r'\b' + re.escape(ex_lower) + r'\b'
-                if re.search(pattern, title_lower) or re.search(pattern, desc_lower) or re.search(pattern, loc_lower):
+                if re.search(pattern, title_lower) or re.search(pattern, loc_lower):
                     excluded = True
                     break
             else:
-                if ex_lower in desc_lower or ex_lower in title_lower or ex_lower in loc_lower:
+                # Always check title & location
+                if ex_lower in title_lower or ex_lower in loc_lower:
+                    excluded = True
+                    break
+                # Check description only for general dealbreaker terms
+                if any(db in ex_lower for db in desc_dealbreakers) and ex_lower in desc_lower:
                     excluded = True
                     break
 
