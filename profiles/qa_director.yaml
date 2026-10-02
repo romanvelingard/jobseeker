@@ -189,16 +189,29 @@ industries:
 
 # Exclusion criteria (IC roles, non-QA leads, non-managerial positions)
 exclude:
-  # Requested Non-Managerial / Non-QA Leads Exclusions
+  # Requested Non-Managerial / Non-QA Management & Lead Exclusions
   - "Software Java Team Lead"
   - "DevOps Lead"
+  - "DevOps Manager"
+  - "DevOps Team Lead"
+  - "DevOps"
+  - "Software Manager"
+  - "Software Development Manager"
+  - "Software Development Team Leader"
+  - "Software Team Lead"
+  - "Mechanical Engineering Manager"
+  - "Mechanical R&D Manager"
+  - "Mechanical Manager"
+  - "Mechanical"
+  - "R&D Manager"
+  - "Research And Development Manager"
+  - "Hardware Manager"
   - "Senior QA Engineer"
   - "QA Engineer"
   - "Automation Engineer"
   - "Embedded Software Team Lead"
   - "Senior Software System Engineer"
   - "Material Manager"
-  - "Software Team Lead"
 
   # General Non-Managerial & Individual Contributor Exclusions
   - "Pure manual QA"
@@ -235,3 +248,4 @@ exclude:
   - "Sales Engineer"
   - "Account Executive"
   - "Technical Support Engineer"
+

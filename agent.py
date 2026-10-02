@@ -383,9 +383,8 @@ def send_email_report(subject: str, html_body: str, app_settings: dict) -> bool:
     else:
         recipients = []
 
-    if not smtp_server or not smtp_username or not smtp_password or not recipients:
-        print("[Email] SMTP configuration incomplete or recipients missing. Skipping email send.", flush=True)
-        print(f"[Email] Current configuration -> SMTP_SERVER: {smtp_server}, USERNAME: {smtp_username}, Recipients: {recipients}", flush=True)
+    if not smtp_server or not smtp_username or not smtp_password or not recipients or "your_email" in str(smtp_username) or "your_app_password" in str(smtp_password):
+        print("[Email] SMTP configuration incomplete or default placeholders present. Skipping email send.", flush=True)
         return False
 
     to_header = ", ".join(recipients)
@@ -502,7 +501,10 @@ def step2_filter_seen_jobs(found_jobs: list[dict], profile_key: str, ignore_days
 
 
 def is_valid_role_title(title: str, job_config: dict) -> bool:
-    """Filters out irrelevant roles whose description text merely mentions target terms."""
+    """
+    Validates that a job title actually matches the active search profile's target domain roles.
+    Prevents irrelevant roles (e.g. Mechanical/DevOps/Software/R&D leads) from entering the scoring pipeline.
+    """
     if not title:
         return False
 
@@ -510,35 +512,60 @@ def is_valid_role_title(title: str, job_config: dict) -> bool:
 
     # 1. Direct match with any target job title in job_config
     raw_jobs = job_config.get("jobs", []) or []
+    target_titles = []
     for item in raw_jobs:
         jt = item.get("title") if isinstance(item, dict) else str(item)
-        if jt and jt.lower() in t_lower:
+        if jt:
+            target_titles.append(str(jt).lower())
+
+    for jt in target_titles:
+        if jt in t_lower or t_lower in jt:
             return True
 
-    # 2. Check for keywords from KEYWORDS_LIST or INDUSTRIES_LIST in title
-    keywords = job_config.get("keywords", []) or []
-    industries = job_config.get("industries", []) or []
-    for kw in keywords + industries:
-        if kw and len(kw) > 3 and kw.lower() in t_lower:
-            return True
+    # 2. Detect profile domain type from target_titles
+    target_text = " ".join(target_titles)
+    is_qa_profile = any(k in target_text for k in ["qa", "quality", "test", "testing", "automation", "איכות", "בדיקות", "אוטומציה"])
+    is_procurement_profile = any(k in target_text for k in ["procurement", "purchasing", "sourcing", "buyer", "supply chain", "vendor", "supplier", "קניין", "רכש", "kupiec", "zakupów"])
 
-    # 3. Comprehensive domain role keywords in TITLE
-    role_keywords = [
-        "procurement", "purchasing", "sourcing", "buyer", "kupiec", "zakupów", "zaopatrzenia",
-        "קניין", "רכש", "שרשרת אספקה", "закупівель", "постачання",
-        "supply chain", "vendor", "supplier", "category", "materials", "material", "inventory", "demand",
-        "operations", "logistics", "planning", "planner", "commercial", "subcontracting", "tendering",
-        "logistyka", "planowanie", "analityk", "rekrutacji",
-        "תפעול", "לוגיסטיקה", "מלאי", "ספקים",
-        "operations coordinator", "supplier coordinator", "supply coordinator", "sales coordinator",
-        "רכז תפעול", "מתאם תפעול", "מתאם ספקים", "מתאם מכירות", "רכז מכירות",
-        "koordynator", "specjalista", "kierownik",
-        "qa", "automation", "test", "testing", "developer", "engineer", "software", "devops", "cloud", "backend"
-    ]
+    if is_qa_profile:
+        qa_role_terms = [
+            "qa", "quality", "test", "testing", "automation", "validation", "v&v",
+            "איכות", "בדיקות", "אוטומציה"
+        ]
+        for term in qa_role_terms:
+            if len(term) <= 3:
+                if re.search(r'\b' + re.escape(term) + r'\b', t_lower):
+                    return True
+            elif term in t_lower:
+                return True
+        return False
 
-    for rk in role_keywords:
-        if rk in t_lower:
-            return True
+    if is_procurement_profile:
+        proc_role_terms = [
+            "procurement", "purchasing", "sourcing", "buyer", "supply chain", "vendor", "supplier",
+            "category manager", "inventory", "materials manager",
+            "קניין", "רכש", "שרשרת אספקה", "ספקים", "מלאי",
+            "kupiec", "zakupów", "zaopatrzenia", "logistyka", "planowanie",
+            "закупівель", "постачання"
+        ]
+        for term in proc_role_terms:
+            if len(term) <= 3:
+                if re.search(r'\b' + re.escape(term) + r'\b', t_lower):
+                    return True
+            elif term in t_lower:
+                return True
+        return False
+
+    # 3. Fallback for custom profiles: check non-generic domain tokens from target jobs
+    generic_words = {"director", "manager", "head", "vp", "senior", "lead", "leader", "specialist", "coordinator", "officer", "executive", "דירקטור", "מנהל", "סמנכ\"ל", "רכז", "מתאם", "of", "and", "&"}
+    for jt in target_titles:
+        tokens = [w.strip().lower() for w in re.findall(r'[\w\"]+', jt) if w.strip().lower() not in generic_words and len(w.strip()) >= 3]
+        for token in tokens:
+            if len(token) <= 3:
+                if re.search(r'\b' + re.escape(token) + r'\b', t_lower):
+                    return True
+            elif token in t_lower:
+                return True
 
     return False
 
@@ -563,25 +590,20 @@ def step3_filter_exclusions(jobs_list: list[dict], exclude_list: list, job_confi
 
         excluded = False
         for ex in exclude_list:
-            ex_lower = ex.lower()
+            ex_lower = ex.lower().strip()
             if not ex_lower:
                 continue
 
-            # Short exclusion terms (<=3 chars e.g. "vp") use regex word boundary matching on title/location
-            if len(ex_lower) <= 3:
-                pattern = r'\b' + re.escape(ex_lower) + r'\b'
-                if re.search(pattern, title_lower) or re.search(pattern, loc_lower):
-                    excluded = True
-                    break
-            else:
-                # Always check title & location
-                if ex_lower in title_lower or ex_lower in loc_lower:
-                    excluded = True
-                    break
-                # Check description only for general dealbreaker terms
-                if any(db in ex_lower for db in desc_dealbreakers) and ex_lower in desc_lower:
-                    excluded = True
-                    break
+            # Word boundary matching on title/location to prevent substring false positives
+            pattern = r'\b' + re.escape(ex_lower) + r'\b'
+            if re.search(pattern, title_lower) or re.search(pattern, loc_lower):
+                excluded = True
+                break
+
+            # Check description only for general dealbreaker terms
+            if any(db in ex_lower for db in desc_dealbreakers) and re.search(pattern, desc_lower):
+                excluded = True
+                break
 
         if not excluded:
             filtered_jobs.append(job)

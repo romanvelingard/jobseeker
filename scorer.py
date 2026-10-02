@@ -34,7 +34,7 @@ def calculate_rule_score(job: dict, job_config: dict) -> float:
     Computes numerical rule score (0-100+) based on:
     - Target Industry (+40 pts)
     - Role Match (+30 pts)
-    - Location/Country (Israel: +30 pts, Poland: +20 pts, Ukraine: +10 pts)
+    - Location/Country (Israel: +50 pts, Poland: +15 pts, Ukraine: +10 pts)
     """
     title = str(job.get("title", "")).lower()
     country = str(job.get("country", "")).lower()
@@ -47,13 +47,37 @@ def calculate_rule_score(job: dict, job_config: dict) -> float:
 
     # 1. Target Industry Boost (+40 pts)
     for ind in industries:
-        if ind.lower() in title or ind.lower() in desc:
+        if ind.lower() in desc:
             score += 40.0
             break
 
-    # 2. Buyer/Procurement Role Boost (+30 pts)
-    buyer_keywords = ["buyer", "purchasing", "procurement", "sourcing", "קניין", "רכש", "zakupów", "kupiec", "закупівель", "постачання"]
-    if any(kw in title for kw in buyer_keywords):
+    # 2. Target Profile Role Title Boost (+30 pts)
+    raw_jobs = job_config.get("jobs", []) or []
+    target_titles = [item.get("title").lower() if isinstance(item, dict) else str(item).lower() for item in raw_jobs if item]
+
+    role_matched = False
+    for jt in target_titles:
+        if jt in title or title in jt:
+            role_matched = True
+            break
+
+    if not role_matched:
+        qa_terms = ["qa", "quality", "test", "testing", "automation", "validation", "v&v", "איכות", "בדיקות", "אוטומציה"]
+        proc_terms = ["buyer", "purchasing", "procurement", "sourcing", "supply chain", "vendor", "supplier", "קניין", "רכש", "zakupów", "kupiec", "закупівель", "постачання"]
+        target_text = " ".join(target_titles)
+        is_qa = any(k in target_text for k in qa_terms)
+        active_terms = qa_terms if is_qa else proc_terms
+
+        for term in active_terms:
+            if len(term) <= 3:
+                if re.search(r'\b' + re.escape(term) + r'\b', title):
+                    role_matched = True
+                    break
+            elif term in title:
+                role_matched = True
+                break
+
+    if role_matched:
         score += 30.0
 
     # 3. Country Boost (Israel: +50, Poland: +15, Ukraine: +10)
@@ -138,7 +162,7 @@ def score_jobs(client: genai.Client, jobs_list: list[dict], job_config: dict, ap
     llm_cfg = app_settings.get("llm", {})
 
     provider = str(llm_cfg.get("provider", "gemini")).lower()
-    llm_model = llm_cfg.get("model", "gemini-1.5-flash")
+    llm_model = llm_cfg.get("model", "gemini-2.5-flash")
     llm_rpm = int(llm_cfg.get("requests_per_minute", 15))
     batch_size = int(llm_cfg.get("batch_size", 3))
     max_retries = int(llm_cfg.get("max_retries", 3))
