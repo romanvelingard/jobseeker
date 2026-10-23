@@ -1,4 +1,4 @@
-python-jobspy>=1.1.55
+python-jobspy>=1.4.1,<2.0.0
 google-genai>=0.1.1
 requests>=2.31.0
 pandas>=2.0.0
