@@ -124,7 +124,7 @@ def load_profile_and_settings(profile_filepath: str, settings_filepath: str = "s
     default_settings = {
         "scraper": {"sites": ["linkedin"], "hours_old": 24, "results_wanted": 20},
         "email": {"smtp_server": "smtp.gmail.com", "smtp_port": 587, "use_tls": True, "email_to": "", "email_from": ""},
-        "llm": {"model": "gemini-1.5-flash", "enabled": True},
+        "llm": {"model": "gemini-3.8-flash", "enabled": True},
         "reports": {"save_local_html": True, "local_filename": "jobs_report.html"},
         "history": {"ignore_days": 7}
     }
@@ -440,16 +440,22 @@ def step1_scrape_all_jobs(job_config: dict, app_settings: dict) -> list[dict]:
 
         for loc in target_locs:
             print(f"[*] Scanning {sites} for '{search_term}' in '{loc}' (target: {loc}, wanted: {results_wanted}, hours_old: {hours_old})...", flush=True)
+            scrape_args = {
+                "site_name": sites,
+                "search_term": search_term,
+                "location": loc,
+                "results_wanted": results_wanted,
+                "hours_old": hours_old,
+            }
+            if "indeed" in sites:
+                scrape_args["country_indeed"] = loc.lower()
+
             try:
-                jobs = scrape_jobs(
-                    site_name=sites,
-                    search_term=search_term,
-                    location=loc,
-                    results_wanted=results_wanted,
-                    hours_old=hours_old,
-                    country_override=loc.lower(),
-                    linkedin_fetch_description=True
-                )
+                # Support both JobSpy 1.4.x+ and older versions
+                try:
+                    jobs = scrape_jobs(**scrape_args, fetch_description=True)
+                except TypeError:
+                    jobs = scrape_jobs(**scrape_args, linkedin_fetch_description=True)
             except Exception as e:
                 print(f"[!] Scraping failed for '{search_term}' in '{loc}': {e}", flush=True)
                 continue

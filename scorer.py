@@ -162,7 +162,7 @@ def score_jobs(client: genai.Client, jobs_list: list[dict], job_config: dict, ap
     llm_cfg = app_settings.get("llm", {})
 
     provider = str(llm_cfg.get("provider", "gemini")).lower()
-    llm_model = llm_cfg.get("model", "gemini-2.5-flash")
+    llm_model = llm_cfg.get("model", "gemini-3.8-flash")
     llm_rpm = int(llm_cfg.get("requests_per_minute", 15))
     batch_size = int(llm_cfg.get("batch_size", 3))
     max_retries = int(llm_cfg.get("max_retries", 3))
