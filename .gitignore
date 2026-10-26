@@ -8,7 +8,7 @@ ENV/
 .env
 
 # Generated reports & logs
-jobs_report.html
+jobs_report*.html
 *.log
 
 # Byte-compiled / optimized files

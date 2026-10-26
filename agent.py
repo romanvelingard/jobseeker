@@ -9,6 +9,7 @@ import glob
 from datetime import datetime, timezone, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+import concurrent.futures
 import requests
 import yaml
 from dotenv import load_dotenv
@@ -116,19 +117,138 @@ def load_yaml_file(filepath: str, default_dict: dict) -> dict:
     return data
 
 
+def fetch_fresh_proxies(max_verified: int = 5, validate: bool = True) -> list[str]:
+    """
+    Fetches fresh elite/anonymous free proxies from ProxyScrape and validates them directly
+    against LinkedIn's job endpoint. Returns only verified working proxy URLs formatted as 'http://ip:port'.
+    """
+    api_url = (
+        "https://api.proxyscrape.com/v4/free-proxy-list/get?"
+        "request=display_proxies&proxy_format=ipport&format=text"
+        "&protocol=http&anonymity=elite"
+    )
+    print("[*] Requesting fresh proxy pool from ProxyScrape...", flush=True)
+    try:
+        resp = requests.get(api_url, timeout=8)
+        if resp.status_code != 200:
+            print(f"[!] ProxyScrape returned status code {resp.status_code}", flush=True)
+            return []
+        raw_list = [p.strip() for p in resp.text.strip().splitlines() if p.strip()]
+        print(f"[+] Fetched {len(raw_list)} candidate proxies from ProxyScrape.", flush=True)
+    except Exception as e:
+        print(f"[!] Error fetching proxies from ProxyScrape: {e}", flush=True)
+        return []
+
+    if not raw_list:
+        return []
+
+    if not validate:
+        return [f"http://{p}" for p in raw_list[:max_verified]]
+
+    print(f"[*] Validating candidate proxies against LinkedIn (target: {max_verified} responsive endpoints)...", flush=True)
+
+    def check_proxy(p: str) -> str | None:
+        url = f"http://{p}"
+        try:
+            # Test proxy directly against LinkedIn's public endpoint
+            test_url = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords=buyer&location=Europe&start=0"
+            r = requests.get(test_url, proxies={"http": url, "https": url}, timeout=3.5)
+            if r.status_code == 200 and len(r.text) > 300:
+                return url
+        except Exception:
+            pass
+        return None
+
+    verified = []
+    # Test top candidates concurrently
+    with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
+        futures = [executor.submit(check_proxy, p) for p in raw_list[:60]]
+        for f in concurrent.futures.as_completed(futures):
+            res = f.result()
+            if res:
+                verified.append(res)
+                if len(verified) >= max_verified:
+                    break
+
+    if verified:
+        print(f"[+] Verified {len(verified)} live proxies responding 200 OK from LinkedIn.", flush=True)
+    else:
+        print("[!] No candidate public proxies passed live LinkedIn verification. Operating via direct connection.", flush=True)
+
+    return verified
+
+
+def update_settings_yaml_proxies(filepath: str, new_proxies: list[str]):
+    """Updates the scraper.proxies list in settings.yaml while preserving all comments and structure."""
+    if not os.path.exists(filepath) or not new_proxies:
+        return
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+
+        new_lines = []
+        in_proxies_block = False
+
+        for line in lines:
+            stripped = line.strip()
+            if line.startswith("  proxies:"):
+                new_lines.append("  proxies:\n")
+                for p in new_proxies:
+                    new_lines.append(f'    - "{p}"\n')
+                in_proxies_block = True
+            elif in_proxies_block:
+                if stripped.startswith("-") or stripped == "[]":
+                    continue  # skip old proxy items
+                elif stripped == "" or not line.startswith("    "):
+                    in_proxies_block = False
+                    new_lines.append(line)
+                else:
+                    new_lines.append(line)
+            else:
+                new_lines.append(line)
+
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.writelines(new_lines)
+        print(f"[+] Updated {len(new_proxies)} fresh proxies in {filepath}", flush=True)
+    except Exception as e:
+        print(f"[!] Note: Could not update {filepath} with fresh proxies: {e}", flush=True)
+
+
 def load_profile_and_settings(profile_filepath: str, settings_filepath: str = "settings.yaml", cli_email_to: str = None) -> tuple[dict, dict]:
     """
     Loads application settings and job definition search profile.
     Merges profile-specific parameters such as recipient email(s), email subject prefix, and HTML report output filename.
     """
     default_settings = {
-        "scraper": {"sites": ["linkedin"], "hours_old": 24, "results_wanted": 20},
+        "scraper": {
+            "sites": ["linkedin", "glassdoor", "indeed", "zip_recruiter"],
+            "hours_old": 24,
+            "results_wanted": 20,
+            "delay_seconds": 3.0,
+            "fetch_description": True,
+            "auto_refresh_proxies": False,
+            "proxies": []
+        },
         "email": {"smtp_server": "smtp.gmail.com", "smtp_port": 587, "use_tls": True, "email_to": "", "email_from": ""},
         "llm": {"model": "gemini-3.8-flash", "enabled": True},
         "reports": {"save_local_html": True, "local_filename": "jobs_report.html"},
         "history": {"ignore_days": 7}
     }
     app_settings = load_yaml_file(settings_filepath, default_settings)
+
+    # Check if auto proxy refresh is requested (via settings.yaml or REFRESH_PROXIES env var)
+    scraper_cfg = app_settings.get("scraper", {})
+    auto_refresh = scraper_cfg.get("auto_refresh_proxies", False) or os.getenv("REFRESH_PROXIES", "false").lower() in ("true", "1", "yes")
+    if auto_refresh:
+        max_auto = int(scraper_cfg.get("max_auto_proxies", 5))
+        fresh = fetch_fresh_proxies(max_verified=max_auto, validate=True)
+        if fresh:
+            scraper_cfg["proxies"] = fresh
+            app_settings["scraper"] = scraper_cfg
+            update_settings_yaml_proxies(settings_filepath, fresh)
+        else:
+            scraper_cfg["proxies"] = []
+            app_settings["scraper"] = scraper_cfg
 
     default_job_config = {
         "name": "",
@@ -271,15 +391,17 @@ def build_html_report(matched_jobs: list, job_config: dict = None) -> str:
         company = job.get("company", "N/A")
         location = job.get("location", "N/A")
         country = job.get("country", "N/A")
+        site = str(job.get("site", "")).strip().capitalize()
         desc = job.get("short_description", "")
         url = job.get("url", "#")
         
+        site_badge = f'<span style="display: inline-block; background-color: #eff6ff; color: #1d4ed8; font-size: 11px; font-weight: 600; padding: 2px 6px; border-radius: 4px; margin-left: 6px; border: 1px solid #bfdbfe;">{site}</span>' if site else ''
         link_html = f'<a href="{url}" target="_blank" style="color: #2563eb; text-decoration: none; font-weight: bold; display: inline-block;">View Job</a>' if url and url != "#" else 'N/A'
         
         row_html = f"""
         <tr style="border-bottom: 1px solid #e5e7eb;">
             <td style="padding: 10px; text-align: center; font-weight: bold; color: #4b5563; word-break: break-word;">{job_id}</td>
-            <td style="padding: 10px; font-weight: 600; color: #111827; word-break: break-word;">{title}</td>
+            <td style="padding: 10px; font-weight: 600; color: #111827; word-break: break-word;">{title} {site_badge}</td>
             <td style="padding: 10px; color: #374151; word-break: break-word;">{company}</td>
             <td style="padding: 10px; color: #6b7280; font-size: 13px; word-break: break-word;">{location}</td>
             <td style="padding: 10px; color: #4b5563; font-size: 13px; font-weight: 500; word-break: break-word;">{country}</td>
@@ -424,9 +546,38 @@ def step1_scrape_all_jobs(job_config: dict, app_settings: dict) -> list[dict]:
     sites = scraper_cfg.get("sites", ["linkedin"])
     hours_old = int(os.getenv("HOURS_OLD", scraper_cfg.get("hours_old", 24)))
     results_wanted = int(os.getenv("RESULTS_WANTED", scraper_cfg.get("results_wanted", 20)))
+    delay_seconds = float(os.getenv("SCRAPER_DELAY_SECONDS", scraper_cfg.get("delay_seconds", 2.0)))
+    fetch_desc = bool(scraper_cfg.get("fetch_description", True))
+
+    # Proxy configuration: check environment variables first, then settings.yaml
+    proxy_env = os.getenv("SCRAPER_PROXIES") or os.getenv("PROXY_URL") or os.getenv("HTTPS_PROXY")
+    proxies_cfg = scraper_cfg.get("proxies")
+    if proxy_env:
+        proxies = [p.strip() for p in proxy_env.split(",") if p.strip()]
+    elif isinstance(proxies_cfg, list):
+        proxies = [str(p).strip() for p in proxies_cfg if str(p).strip()]
+    elif isinstance(proxies_cfg, str) and proxies_cfg.strip():
+        proxies = [proxies_cfg.strip()]
+    else:
+        proxies = None
+
+    if proxies:
+        print(f"[*] Proxy enabled with {len(proxies)} endpoint(s).", flush=True)
 
     print(f"[*] STEP 1: Scrape & Search positions across locations: {locations_list}", flush=True)
     raw_found_jobs = []
+
+    SUPPORTED_INDEED_COUNTRIES = {
+        "argentina", "australia", "austria", "bahrain", "belgium", "brazil", "canada",
+        "chile", "china", "colombia", "costa rica", "czech republic", "denmark", "ecuador",
+        "egypt", "finland", "france", "germany", "greece", "hong kong", "hungary", "india",
+        "indonesia", "ireland", "israel", "italy", "japan", "kuwait", "luxembourg", "malaysia",
+        "mexico", "morocco", "netherlands", "new zealand", "nigeria", "norway", "oman",
+        "pakistan", "panama", "peru", "philippines", "poland", "portugal", "qatar", "romania",
+        "saudi arabia", "singapore", "south africa", "south korea", "spain", "sweden",
+        "switzerland", "taiwan", "thailand", "türkiye", "turkey", "ukraine",
+        "united arab emirates", "uae", "uk", "usa", "uruguay", "venezuela", "vietnam"
+    }
 
     for entry in job_entries:
         search_term = entry.get("title", "")
@@ -439,30 +590,77 @@ def step1_scrape_all_jobs(job_config: dict, app_settings: dict) -> list[dict]:
             continue
 
         for loc in target_locs:
-            print(f"[*] Scanning {sites} for '{search_term}' in '{loc}' (target: {loc}, wanted: {results_wanted}, hours_old: {hours_old})...", flush=True)
+            active_sites = [s.strip().lower() for s in sites if s]
+            loc_clean = loc.lower().strip()
+            indeed_country = None
+
+            if "indeed" in active_sites:
+                if loc_clean in ["usa", "us", "united states"]:
+                    indeed_country = "usa"
+                elif loc_clean in ["uk", "united kingdom", "great britain"]:
+                    indeed_country = "uk"
+                elif loc_clean in ["uae", "united arab emirates"]:
+                    indeed_country = "united arab emirates"
+                elif loc_clean in ["turkey", "türkiye"]:
+                    indeed_country = "türkiye"
+                elif loc_clean in SUPPORTED_INDEED_COUNTRIES:
+                    indeed_country = loc_clean
+                else:
+                    # Broad region search like 'Europe', 'EMEA': Indeed requires a specific country domain
+                    active_sites = [s for s in active_sites if s != "indeed"]
+
+            if "zip_recruiter" in active_sites:
+                if loc_clean not in ["usa", "us", "united states", "uk", "united kingdom", "canada"]:
+                    # ZipRecruiter is primarily supported in US, UK, and Canada
+                    active_sites = [s for s in active_sites if s != "zip_recruiter"]
+
+            if not active_sites:
+                continue
+
+            # Resolve target results_wanted for this specific location if configured
+            loc_results_wanted = results_wanted
+            results_by_loc = scraper_cfg.get("results_wanted_by_location", {})
+            if isinstance(results_by_loc, dict):
+                for k, v in results_by_loc.items():
+                    if k.lower() == loc.lower():
+                        loc_results_wanted = int(v)
+                        break
+
+            print(f"[*] Scanning {active_sites} for '{search_term}' in '{loc}' (target: {loc}, wanted: {loc_results_wanted}, hours_old: {hours_old})...", flush=True)
             scrape_args = {
-                "site_name": sites,
+                "site_name": active_sites,
                 "search_term": search_term,
                 "location": loc,
-                "results_wanted": results_wanted,
+                "results_wanted": loc_results_wanted,
                 "hours_old": hours_old,
             }
-            if "indeed" in sites:
-                scrape_args["country_indeed"] = loc.lower()
+            if indeed_country:
+                scrape_args["country_indeed"] = indeed_country
+            if proxies:
+                scrape_args["proxies"] = proxies
 
             try:
                 # Support both JobSpy 1.4.x+ and older versions
                 try:
-                    jobs = scrape_jobs(**scrape_args, fetch_description=True)
+                    jobs = scrape_jobs(**scrape_args, fetch_description=fetch_desc)
                 except TypeError:
-                    jobs = scrape_jobs(**scrape_args, linkedin_fetch_description=True)
+                    jobs = scrape_jobs(**scrape_args, linkedin_fetch_description=fetch_desc)
             except Exception as e:
                 print(f"[!] Scraping failed for '{search_term}' in '{loc}': {e}", flush=True)
+                if delay_seconds > 0:
+                    time.sleep(delay_seconds)
                 continue
+
+            if delay_seconds > 0:
+                time.sleep(delay_seconds)
 
             if jobs is None or jobs.empty:
                 print(f"[-] No new jobs found for '{search_term}' in '{loc}'.", flush=True)
                 continue
+
+            # Ensure total combined jobs across all queried boards does not exceed loc_results_wanted
+            if len(jobs) > loc_results_wanted:
+                jobs = jobs.head(loc_results_wanted)
 
             print(f"[+] Scraped {len(jobs)} jobs for '{search_term}' in '{loc}'.", flush=True)
 
@@ -472,6 +670,7 @@ def step1_scrape_all_jobs(job_config: dict, app_settings: dict) -> list[dict]:
                 company = str(row.get("company", "Unknown Company"))
                 job_loc = str(row.get("location", loc))
                 desc = str(row.get("description", ""))
+                site_source = str(row.get("site", "linkedin")).strip().capitalize()
 
                 raw_found_jobs.append({
                     "title": title,
@@ -479,7 +678,8 @@ def step1_scrape_all_jobs(job_config: dict, app_settings: dict) -> list[dict]:
                     "location": job_loc if job_loc and job_loc != "nan" else loc,
                     "country": loc,
                     "desc": desc,
-                    "url": job_url
+                    "url": job_url,
+                    "site": site_source
                 })
 
     print(f"[+] STEP 1 Complete: Total raw jobs collected = {len(raw_found_jobs)}", flush=True)
@@ -651,6 +851,7 @@ def step5_select_top_jobs(scored_jobs: list[dict], max_results: int = 30) -> lis
             "company": j.get("company", "Unknown Company"),
             "location": j.get("location", j.get("country", "N/A")),
             "country": j.get("country", "N/A"),
+            "site": j.get("site", ""),
             "short_description": eval_res.get("short_description", ""),
             "url": j.get("url", "#"),
             "verdict": eval_res.get("verdict", ""),

@@ -1,10 +1,28 @@
 # Application & Operational Settings
 
 scraper:
+  # Supported job boards: "linkedin", "glassdoor", "indeed", "zip_recruiter", "google", "bayt", "hellowork"
   sites:
     - "linkedin"
+    - "glassdoor"
+    - "indeed"
+    - "zip_recruiter"
   hours_old: 24
-  results_wanted: 20
+  results_wanted: 10
+  results_wanted_by_location:
+    USA: 10
+  delay_seconds: 2.0           # Seconds to wait between search queries to prevent 429 blocks
+  fetch_description: false     # Set to false to prevent LinkedIn 429 detail page blocks
+  auto_refresh_proxies: true   # Auto-fetch & verify fresh free proxies from ProxyScrape before each run
+  max_auto_proxies: 5          # Number of verified live proxies to keep in rotation
+  # Proxies: list of proxy URLs, or set via SCRAPER_PROXIES in .env
+  # Format: "http://user:password@host:port" or "socks5://user:password@host:port"
+  proxies:
+    - "http://18.221.175.172:8000"
+    - "http://171.245.71.144:2037"
+    - "http://85.121.149.232:18080"
+    - "http://34.43.46.91:443"
+
 
 
 email:
