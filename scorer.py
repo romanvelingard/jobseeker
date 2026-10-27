@@ -3,12 +3,29 @@ import time
 from google import genai
 from google.genai import types
 
-def extract_skills_summary(description: str, job_title: str, keywords_list: list, industries_list: list, max_words: int = 30) -> str:
+def extract_skills_summary(description: str, job_title: str, keywords_list: list = None, industries_list: list = None, max_words: int = 30) -> str:
     """Extracts matched keywords, target industries, and the first 30 words of job description as a clean summary."""
-    if not description or len(description.strip()) == 0:
-        return f"Position: {job_title}"
-    
-    words = description.split()
+    clean_desc = (description or "").strip()
+    if clean_desc.lower() in ("none", "nan", "null"):
+        clean_desc = ""
+
+    # If description is missing/empty, synthesize a clean, informative overview from job title and keywords
+    if not clean_desc:
+        found_skills = []
+        seen_lower = set()
+        for kw in (keywords_list or []) + (industries_list or []):
+            k_lower = kw.lower()
+            if k_lower not in seen_lower and re.search(r'\b' + re.escape(kw) + r'\b', job_title, re.IGNORECASE):
+                found_skills.append(kw)
+                seen_lower.add(k_lower)
+
+        if found_skills:
+            skills_str = ", ".join(found_skills[:6])
+            return f"<strong>Key Skills/Industry: {skills_str}</strong> — Position: {job_title}. View full details via link."
+        else:
+            return f"<strong>Position:</strong> {job_title}. View full details via link."
+
+    words = clean_desc.split()
     first_n_words = " ".join(words[:max_words])
     if len(words) > max_words:
         first_n_words += "..."
@@ -18,7 +35,7 @@ def extract_skills_summary(description: str, job_title: str, keywords_list: list
 
     for kw in (keywords_list or []) + (industries_list or []):
         k_lower = kw.lower()
-        if k_lower not in seen_lower and re.search(r'\b' + re.escape(kw) + r'\b', description + " " + job_title, re.IGNORECASE):
+        if k_lower not in seen_lower and re.search(r'\b' + re.escape(kw) + r'\b', clean_desc + " " + job_title, re.IGNORECASE):
             found_skills.append(kw)
             seen_lower.add(k_lower)
 
@@ -27,6 +44,7 @@ def extract_skills_summary(description: str, job_title: str, keywords_list: list
         return f"<strong>Key Skills/Industry: {skills_str}</strong> — {first_n_words}"
     else:
         return f"<strong>Overview:</strong> {first_n_words}"
+
 
 
 def calculate_rule_score(job: dict, job_config: dict) -> float:
@@ -131,8 +149,9 @@ def parse_batch_response(batch: list[dict], response_text: str, keywords_list: l
                 elif line.startswith("REASON:") and not summary:
                     summary = line.replace("REASON:", "").strip()
 
-            if not summary:
+            if not summary or summary.lower() in ("none", "nan", "null"):
                 summary = extract_skills_summary(job.get("desc", ""), job.get("title", ""), keywords_list, industries_list)
+
 
             job["eval_result"] = {
                 "match": is_match,

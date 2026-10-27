@@ -98,5 +98,31 @@ class TestJobFilteringAndScoring(unittest.TestCase):
         proc_score = calculate_rule_score(proc_job, self.proc_config)
         self.assertGreaterEqual(proc_score, 80.0, "Senior Buyer position in Israel should get high rule score")
 
+    def test_extract_skills_summary_never_returns_none(self):
+        from scorer import extract_skills_summary
+
+        bad_descriptions = ["None", "none", "nan", "NaN", "null", "", None, "   "]
+        for bad_desc in bad_descriptions:
+            with self.subTest(bad_desc=bad_desc):
+                summary = extract_skills_summary(bad_desc, "Procurement Specialist", ["Procurement", "Sourcing"], ["Defense"])
+                self.assertNotIn("Overview: None", summary, "Summary must never output 'Overview: None'")
+                self.assertNotIn("— None", summary, "Summary must never output '— None'")
+                self.assertTrue(len(summary) > 0, "Summary must not be empty")
+
+        # Test with real description
+        real_desc = "DriveNets is looking for a Procurement Specialist with 5 years experience in hardware sourcing."
+        summary_real = extract_skills_summary(real_desc, "Procurement Specialist", ["Procurement", "Sourcing"], ["Networking"])
+        self.assertIn("Key Skills/Industry", summary_real)
+        self.assertIn("DriveNets is looking for", summary_real)
+
+    def test_extract_linkedin_job_id(self):
+        from agent import extract_linkedin_job_id
+
+        self.assertEqual(extract_linkedin_job_id("https://www.linkedin.com/jobs/view/4479185173"), "4479185173")
+        self.assertEqual(extract_linkedin_job_id("https://il.linkedin.com/jobs/view/4475814553?refId=123"), "4475814553")
+        self.assertEqual(extract_linkedin_job_id("https://www.linkedin.com/jobs/search/?currentJobId=4474243974&geoId=101620261"), "4474243974")
+        self.assertIsNone(extract_linkedin_job_id("https://www.indeed.com/viewjob?jk=abcdef123456"))
+
 if __name__ == "__main__":
     unittest.main()
+

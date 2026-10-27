@@ -12,10 +12,13 @@ from email.mime.text import MIMEText
 import concurrent.futures
 import requests
 import yaml
+import pandas as pd
+from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from jobspy import scrape_jobs
 from google import genai
 from google.genai import types
+
 
 from scorer import score_jobs, extract_skills_summary
 
@@ -214,7 +217,91 @@ def update_settings_yaml_proxies(filepath: str, new_proxies: list[str]):
         print(f"[!] Note: Could not update {filepath} with fresh proxies: {e}", flush=True)
 
 
+def extract_linkedin_job_id(url: str) -> str | None:
+    """Extracts numeric LinkedIn job ID from various URL formats."""
+    if not url:
+        return None
+    m = re.search(r'/jobs/view/(\d+)', url)
+    if m:
+        return m.group(1)
+    m = re.search(r'currentJobId=(\d+)', url)
+    if m:
+        return m.group(1)
+    m = re.search(r'\b(\d{9,11})\b', url)
+    if m:
+        return m.group(1)
+    return None
+
+
+def fetch_linkedin_description(url: str, proxies: list[str] = None, timeout: int = 6) -> str:
+    """
+    Fetches full job description on-demand for a single LinkedIn job posting.
+    Uses browser headers and queries the lightweight guest job posting API.
+    Rotates through available proxies if direct request encounters 429 rate limiting.
+    """
+    job_id = extract_linkedin_job_id(url)
+    if not job_id:
+        return ""
+
+    headers = {
+        "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "accept-language": "en-US,en;q=0.9",
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    }
+    endpoints = [
+        f"https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{job_id}",
+        f"https://www.linkedin.com/jobs/view/{job_id}"
+    ]
+
+    # 1. Try direct connection
+    for ep in endpoints:
+        try:
+            resp = requests.get(ep, headers=headers, timeout=timeout)
+            if resp.status_code == 200:
+                soup = BeautifulSoup(resp.text, "html.parser")
+                markup = soup.find("div", class_="show-more-less-html__markup")
+                if not markup:
+                    markup = soup.find("section", class_="description") or soup.find("div", class_="description__text")
+                if markup:
+                    text = markup.get_text(separator=" ", strip=True)
+                    text = re.sub(r"\s+", " ", text).strip()
+                    if len(text) > 20:
+                        return text
+            elif resp.status_code == 429:
+                break
+        except Exception:
+            continue
+
+    # 2. If direct hit 429 or timed out, try via configured/fresh proxies
+    if proxies:
+        for p in proxies:
+            p_clean = str(p).strip()
+            if not p_clean:
+                continue
+            if not p_clean.startswith("http"):
+                p_clean = f"http://{p_clean}"
+            proxy_dict = {"http": p_clean, "https": p_clean}
+            for ep in endpoints:
+                try:
+                    resp = requests.get(ep, headers=headers, proxies=proxy_dict, timeout=timeout)
+                    if resp.status_code == 200:
+                        soup = BeautifulSoup(resp.text, "html.parser")
+                        markup = soup.find("div", class_="show-more-less-html__markup")
+                        if not markup:
+                            markup = soup.find("section", class_="description") or soup.find("div", class_="description__text")
+                        if markup:
+                            text = markup.get_text(separator=" ", strip=True)
+                            text = re.sub(r"\s+", " ", text).strip()
+                            if len(text) > 20:
+                                return text
+                except Exception:
+                    continue
+
+    return ""
+
+
 def load_profile_and_settings(profile_filepath: str, settings_filepath: str = "settings.yaml", cli_email_to: str = None) -> tuple[dict, dict]:
+
     """
     Loads application settings and job definition search profile.
     Merges profile-specific parameters such as recipient email(s), email subject prefix, and HTML report output filename.
@@ -669,8 +756,15 @@ def step1_scrape_all_jobs(job_config: dict, app_settings: dict) -> list[dict]:
                 title = str(row.get("title", "Unknown Title"))
                 company = str(row.get("company", "Unknown Company"))
                 job_loc = str(row.get("location", loc))
-                desc = str(row.get("description", ""))
+                raw_desc = row.get("description")
+                if raw_desc is None or (isinstance(raw_desc, float) and (raw_desc != raw_desc or pd.isna(raw_desc))):
+                    desc = ""
+                else:
+                    desc = str(raw_desc).strip()
+                    if desc.lower() in ("none", "nan", "null"):
+                        desc = ""
                 site_source = str(row.get("site", "linkedin")).strip().capitalize()
+
 
                 raw_found_jobs.append({
                     "title": title,
@@ -818,6 +912,49 @@ def step3_filter_exclusions(jobs_list: list[dict], exclude_list: list, job_confi
     return filtered_jobs
 
 
+def step3b_enrich_candidate_descriptions(candidate_jobs: list[dict], app_settings: dict, max_enrich: int = 30) -> list[dict]:
+    """
+    Step 4b: Enriches missing job descriptions on-demand (especially for LinkedIn jobs).
+    Targeting only qualified candidate positions avoids bulk IP rate limiting.
+    """
+    if not candidate_jobs:
+        return candidate_jobs
+
+    proxies = app_settings.get("scraper", {}).get("proxies") or []
+    if isinstance(proxies, str):
+        proxies = [proxies]
+
+    missing_desc_jobs = []
+    for job in candidate_jobs:
+        desc = (job.get("desc") or "").strip()
+        if not desc or desc.lower() in ("none", "nan", "null"):
+            job["desc"] = ""  # Normalize to clean empty string
+            url = job.get("url", "")
+            if "linkedin.com" in url.lower() or job.get("site", "").lower() == "linkedin":
+                missing_desc_jobs.append(job)
+
+    if not missing_desc_jobs:
+        return candidate_jobs
+
+    enrich_count = min(len(missing_desc_jobs), max_enrich)
+    print(f"[*] STEP 4b: Enriching descriptions on-demand for {enrich_count} candidate LinkedIn position(s)...", flush=True)
+
+    success_count = 0
+    for idx, job in enumerate(missing_desc_jobs[:enrich_count], 1):
+        url = job.get("url", "")
+        title = job.get("title", "Unknown")
+        company = job.get("company", "Unknown")
+        desc = fetch_linkedin_description(url, proxies=proxies, timeout=6)
+        if desc:
+            job["desc"] = desc
+            success_count += 1
+            print(f"    [{idx}/{enrich_count}] Enriched description for '{title}' at {company} ({len(desc)} chars)", flush=True)
+        time.sleep(0.4)
+
+    print(f"[+] STEP 4b Complete: Successfully enriched {success_count}/{enrich_count} descriptions.", flush=True)
+    return candidate_jobs
+
+
 def step4_score_jobs(jobs_list: list[dict], client: genai.Client, job_config: dict, app_settings: dict, last_request_time: list[float], quota_exhausted_flag: list[bool]) -> list[dict]:
     """Step 5: Gives score for each job left by country and by industry via dedicated scorer module."""
     print(f"[*] STEP 5: Scoring {len(jobs_list)} candidate jobs by country & industry...", flush=True)
@@ -845,6 +982,10 @@ def step5_select_top_jobs(scored_jobs: list[dict], max_results: int = 30) -> lis
     final_list = []
     for idx, j in enumerate(top_jobs, 1):
         eval_res = j.get("eval_result", {})
+        short_desc = eval_res.get("short_description", "")
+        if not short_desc or "overview: none" in short_desc.lower() or short_desc.strip().lower() in ("none", "nan"):
+            short_desc = extract_skills_summary(j.get("desc", ""), j.get("title", ""))
+
         final_list.append({
             "id": idx,
             "title": j.get("title", "Unknown Title"),
@@ -852,7 +993,7 @@ def step5_select_top_jobs(scored_jobs: list[dict], max_results: int = 30) -> lis
             "location": j.get("location", j.get("country", "N/A")),
             "country": j.get("country", "N/A"),
             "site": j.get("site", ""),
-            "short_description": eval_res.get("short_description", ""),
+            "short_description": short_desc,
             "url": j.get("url", "#"),
             "verdict": eval_res.get("verdict", ""),
             "score": j.get("score", 0.0)
@@ -860,6 +1001,7 @@ def step5_select_top_jobs(scored_jobs: list[dict], max_results: int = 30) -> lis
 
     print(f"[+] STEP 6 Complete: Final report selection contains {len(final_list)} top-scoring positions.", flush=True)
     return final_list
+
 
 
 def step6_dispatch_reports(final_jobs: list[dict], profile_key: str, profile_map: dict, full_seen_data: dict, ignore_days: int, app_settings: dict, job_config: dict):
@@ -965,8 +1107,12 @@ def run_pipeline(profile_filepath: str, settings_filepath: str = "settings.yaml"
     # 4. Remove jobs matching exclusions or invalid position titles
     candidate_jobs = step3_filter_exclusions(unseen_jobs, exclude_list, job_config)
 
+    # 4b. Enrich missing job descriptions (e.g. LinkedIn) for candidate positions
+    candidate_jobs = step3b_enrich_candidate_descriptions(candidate_jobs, app_settings)
+
     # 5. Score candidate jobs
     scored_jobs = step4_score_jobs(candidate_jobs, client, job_config, app_settings, last_request_time, QUOTA_EXHAUSTED_FLAG)
+
 
     # 6. Prepare top selected jobs
     final_jobs = step5_select_top_jobs(scored_jobs, max_results=max_results)
