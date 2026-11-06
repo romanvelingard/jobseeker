@@ -27,6 +27,22 @@
 # - Consulting/freelance roles are report-only: rates and submissions are
 #   handled privately with the user's approval; this file sends nothing
 #   automatically and contains no pricing.
+# - Precision (manual review checks, deliberately NOT exclusion keywords,
+#   because a JD that merely mentions these terms can still be a fit):
+#   * Skip roles whose MANDATORY core is hands-on stack work outside the
+#     user's profile (e.g. .NET/C# with React/Angular, RAG/MCP/LangChain
+#     engineering) or whose core is QA/testing-team leadership.
+#   * Skip roles whose core is formal project/program management or PMO
+#     execution (mandatory years of project/program management, budgets,
+#     procurement, tenders). Product management roles stay in scope as
+#     conditional leads: a formal-PM-years gap is flagged, not excluded.
+#   * Domain-specific products (e.g. hospitality, ERP/CRM) are judged by
+#     the actual requirements, not by title.
+#   * (Effect of these notes depends on the consuming program.)
+#   * A mention of React, QA, testing or project management in a JD is not
+#     a reason to drop a role; judge by what is mandatory.
+# - Search terms such as "internal products" and "on-call" describe roles
+#   to find. They are not claims about experience; nothing here is a CV.
 name: "Security & Platform Leadership"
 
 # Recipient Email(s) for this profile
@@ -93,9 +109,12 @@ jobs:
   - "Senior Product Manager Security"
   - "Director of Product Security"
   - "Group Product Manager Security"
-  - "Principal Product Manager AI"
   - "Senior Product Manager AI Security"
-  - "AI Product Lead"
+  - "Head of Internal Products"
+  - "Director of Internal Products"
+  - "Head of Platform Product"
+  - "Director of Platform Product"
+  - "Senior Product Manager Network Security"
 
   # Consulting / freelance (report-only; see header notes)
   - "vCISO"
@@ -133,14 +152,6 @@ keywords:
   - "Infrastructure roadmap"
   - "Team leadership"
   - "Building and scaling teams"
-  - "Hiring and mentoring"
-  - "Cross-functional collaboration"
-  - "Stakeholder management"
-  - "Budget management"
-  - "Vendor management"
-  - "Process improvement"
-  - "Organizational transformation"
-  - "Executive reporting"
   - "Board reporting"
   - "Risk management"
 
@@ -150,15 +161,10 @@ keywords:
   - "Site Reliability Engineering"
   - "SRE"
   - "CI/CD"
-  - "Continuous integration"
-  - "Continuous delivery"
   - "Infrastructure as Code"
-  - "IaC"
   - "Terraform"
   - "Kubernetes"
-  - "K8s"
   - "Docker"
-  - "Containers"
   - "AWS"
   - "GCP"
   - "Azure"
@@ -169,17 +175,18 @@ keywords:
   - "GitHub Actions"
   - "GitLab CI"
   - "Observability"
-  - "Monitoring"
   - "Prometheus"
   - "Grafana"
   - "Incident management"
   - "On-call"
+  - "On-call management"
   - "PagerDuty"
+  - "Opsgenie"
+  - "Incident response tooling"
   - "Production reliability"
   - "Release management"
   - "MTTR"
   - "FinOps"
-  - "Cost optimization"
 
   # Security
   - "Information security"
@@ -194,7 +201,6 @@ keywords:
   - "Security posture"
   - "SOC 2"
   - "ISO 27001"
-  - "Compliance"
   - "Security compliance"
   - "Incident response"
   - "Security architecture"
@@ -205,25 +211,18 @@ keywords:
   # AI / modern engineering
   - "AI agents"
   - "LLM"
-  - "Generative AI"
   - "AI infrastructure"
-  - "ML pipelines"
-  - "MLOps"
 
   # Product management (cyber / AI security)
   - "Product strategy"
   - "Product roadmap"
-  - "Go-to-market"
-  - "B2B SaaS"
-  - "Developer experience"
+  - "Internal products"
+  - "Internal platform products"
+  - "Internal tools"
+  - "Enterprise-wide systems"
+  - "Network security"
 
   # Process & Work Models
-  - "Agile"
-  - "Scrum"
-  - "SDLC"
-  - "Remote"
-  - "Hybrid"
-  - "Work from anywhere"
 
 # Preferred Target Industries
 industries:
@@ -247,7 +246,6 @@ industries:
 # - Junior / student / entry-level roles are out of scope (single words
 #   like "junior" or "student" can also appear inside leadership JDs,
 #   e.g. "mentor junior engineers" - judge by the actual role).
-# - Recruiter / talent-agency reposts are out of scope.
 # - Sector exclusions: government bodies and large Israeli banks.
 #   NOT excluded: fintech/payments companies and vendors whose clients
 #   are banks or government (those remain in scope).
