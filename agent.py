@@ -312,6 +312,7 @@ def load_profile_and_settings(profile_filepath: str, settings_filepath: str = "s
             "hours_old": 24,
             "results_wanted": 20,
             "delay_seconds": 3.0,
+            "profile_delay_seconds": 120,
             "fetch_description": True,
             "auto_refresh_proxies": False,
             "proxies": []
@@ -1192,7 +1193,15 @@ def main():
     for p in unique_profiles:
         print(f"    - {p}", flush=True)
 
-    for profile_path in unique_profiles:
+    # Resolve timeout/delay between profiles (default: 120 seconds / 2 minutes)
+    global_settings = load_yaml_file(args.settings, {})
+    cfg_profile_delay = global_settings.get("scraper", {}).get("profile_delay_seconds", 120)
+    profile_delay_seconds = float(os.getenv("PROFILE_DELAY_SECONDS", cfg_profile_delay if cfg_profile_delay is not None else 120))
+
+    for idx, profile_path in enumerate(unique_profiles):
+        if idx > 0 and profile_delay_seconds > 0:
+            print(f"\n[*] Waiting {profile_delay_seconds:.0f} seconds (2 min timeout) before starting next profile...", flush=True)
+            time.sleep(profile_delay_seconds)
         try:
             run_pipeline(profile_path, settings_filepath=args.settings, cli_email_to=args.email_to)
         except Exception as e:

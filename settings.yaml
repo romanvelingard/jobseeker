@@ -12,6 +12,7 @@ scraper:
   results_wanted_by_location:
     USA: 10
   delay_seconds: 2.0           # Seconds to wait between search queries to prevent 429 blocks
+  profile_delay_seconds: 120   # Seconds to wait between executing different search profiles (2 minutes)
   fetch_description: false     # Set to false to prevent LinkedIn 429 detail page blocks
   auto_refresh_proxies: true   # Auto-fetch & verify fresh free proxies from ProxyScrape before each run
   max_auto_proxies: 5          # Number of verified live proxies to keep in rotation
