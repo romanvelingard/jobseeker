@@ -56,7 +56,7 @@ jobs:
           if [ "${{ github.event.inputs.profile }}" != "" ] && [ "${{ github.event.inputs.profile }}" != "all" ]; then
             python agent.py --profile "${{ github.event.inputs.profile }}"
           else
-            python agent.py --profile profiles/procurement.yaml profiles/qa_director.yaml
+            python agent.py --all-profiles
           fi
 
       - name: Persist seen jobs history

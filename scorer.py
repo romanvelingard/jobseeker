@@ -84,7 +84,20 @@ def calculate_rule_score(job: dict, job_config: dict) -> float:
         proc_terms = ["buyer", "purchasing", "procurement", "sourcing", "supply chain", "vendor", "supplier", "קניין", "רכש", "zakupów", "kupiec", "закупівель", "постачання"]
         target_text = " ".join(target_titles)
         is_qa = any(k in target_text for k in qa_terms)
-        active_terms = qa_terms if is_qa else proc_terms
+        is_proc = any(k in target_text for k in proc_terms)
+
+        if is_qa:
+            active_terms = qa_terms
+        elif is_proc:
+            active_terms = proc_terms
+        else:
+            generic_words = {"director", "manager", "head", "vp", "senior", "lead", "leader", "specialist", "coordinator", "officer", "executive", "דירקטור", "מנהל", "סמנכ\"ל", "רכז", "מתאם", "of", "and", "&"}
+            active_terms = list({
+                w.strip().lower()
+                for jt in target_titles
+                for w in re.findall(r'[\w\"]+', jt)
+                if w.strip().lower() not in generic_words and len(w.strip()) >= 3
+            })
 
         for term in active_terms:
             if len(term) <= 3:
