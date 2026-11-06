@@ -823,23 +823,44 @@ def is_valid_role_title(title: str, job_config: dict) -> bool:
         if jt in t_lower or t_lower in jt:
             return True
 
-    # 2. Detect profile domain type from target_titles
+    # 2. Detect profile domain type from target_titles using word-boundary checks
     target_text = " ".join(target_titles)
-    is_qa_profile = any(k in target_text for k in ["qa", "quality", "test", "testing", "automation", "איכות", "בדיקות", "אוטומציה"])
-    is_procurement_profile = any(k in target_text for k in ["procurement", "purchasing", "sourcing", "buyer", "supply chain", "vendor", "supplier", "קניין", "רכש", "kupiec", "zakupów"])
+
+    def has_domain_term(text: str, terms: list[str]) -> bool:
+        for term in terms:
+            if len(term) <= 4:
+                if re.search(r'\b' + re.escape(term) + r'\b', text):
+                    return True
+            elif term in text:
+                return True
+        return False
+
+    qa_Check_terms = ["qa", "quality", "test", "testing", "automation", "איכות", "בדיקות", "אוטומציה"]
+    proc_check_terms = ["procurement", "purchasing", "sourcing", "buyer", "supply chain", "vendor", "supplier", "קניין", "רכש", "kupiec", "zakupów"]
+    sec_platform_check_terms = [
+        "ciso", "vciso", "infosec", "security", "cyber", "cybersecurity", "devsecops",
+        "devops", "sre", "site reliability", "platform", "infrastructure", "cloud",
+        "cio", "cto", "אבטחת מידע", "סייבר", "תשתיות"
+    ]
+
+    is_qa_profile = has_domain_term(target_text, qa_Check_terms)
+    is_procurement_profile = has_domain_term(target_text, proc_check_terms)
+    is_sec_platform_profile = has_domain_term(target_text, sec_platform_check_terms)
+
+    if is_sec_platform_profile and not is_qa_profile:
+        sec_platform_role_terms = [
+            "ciso", "vciso", "infosec", "security", "cyber", "cybersecurity", "devsecops",
+            "devops", "sre", "site reliability", "platform", "infrastructure", "cloud",
+            "cio", "cto", "mis", "it", "r&d", "ai", "אבטחת מידע", "סייבר", "תשתיות", "מערכות מידע"
+        ]
+        return has_domain_term(t_lower, sec_platform_role_terms)
 
     if is_qa_profile:
         qa_role_terms = [
             "qa", "quality", "test", "testing", "automation", "validation", "v&v",
             "איכות", "בדיקות", "אוטומציה"
         ]
-        for term in qa_role_terms:
-            if len(term) <= 3:
-                if re.search(r'\b' + re.escape(term) + r'\b', t_lower):
-                    return True
-            elif term in t_lower:
-                return True
-        return False
+        return has_domain_term(t_lower, qa_role_terms)
 
     if is_procurement_profile:
         proc_role_terms = [
@@ -849,13 +870,7 @@ def is_valid_role_title(title: str, job_config: dict) -> bool:
             "kupiec", "zakupów", "zaopatrzenia", "logistyka", "planowanie",
             "закупівель", "постачання"
         ]
-        for term in proc_role_terms:
-            if len(term) <= 3:
-                if re.search(r'\b' + re.escape(term) + r'\b', t_lower):
-                    return True
-            elif term in t_lower:
-                return True
-        return False
+        return has_domain_term(t_lower, proc_role_terms)
 
     # 3. Fallback for custom profiles: check non-generic domain tokens from target jobs
     generic_words = {"director", "manager", "head", "vp", "senior", "lead", "leader", "specialist", "coordinator", "officer", "executive", "דירקטור", "מנהל", "סמנכ\"ל", "רכז", "מתאם", "of", "and", "&"}

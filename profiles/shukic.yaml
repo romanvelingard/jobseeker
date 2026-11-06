@@ -1,0 +1,271 @@
+# Search Profile: Security & Platform Leadership (Director / VP / Head / CISO)
+#
+# NOTE: comments in this file document search criteria for the human reader.
+# They are NOT enforced by the consuming program unless that program
+# implements them. Only the structured keys below drive any actual filtering,
+# and their exact behavior depends on the consuming program (unknown here).
+#
+# Search-only criteria (documented, not enforced by this file):
+# - Salary floor: 60,000 ILS gross base per month. Postings with an
+#   unpublished salary are flagged as "salary unknown" - not assumed to
+#   meet or miss the bar.
+# - Salary is a search filter only: NEVER state a salary in any application.
+#   If an application form requires one, stop and ask the user.
+# - Keywords below are search/match terms for finding relevant postings.
+#   They are NOT claims about the user's skills or experience and must not
+#   be read as a CV.
+# - Locations list is a single flat list: "Remote" here does NOT enforce
+#   legal eligibility to work from Israel, and does NOT separate Israel
+#   results from abroad results. Both checks stay manual/outside this file.
+# - Language: postings must work in English or Hebrew (user speaks both;
+#   no German).
+# - Company size: no size floor applies (the earlier minimum-size policy
+#   was removed). Small growth-stage AI/quantum startups are in scope.
+# - Seniority: senior leadership roles are the focus, but titles alone do
+#   not disqualify a posting - scope is judged case by case, so there is
+#   no blanket hands-on/IC exclusion.
+# - Consulting/freelance roles are report-only: rates and submissions are
+#   handled privately with the user's approval; this file sends nothing
+#   automatically and contains no pricing.
+name: "Security & Platform Leadership"
+
+# Recipient Email(s) for this profile
+email_to: "shukiyu@gmail.com"
+email_subject_prefix: "🚀 [Security & Platform Leadership]"
+
+# Local HTML report filename for offline preview
+local_filename: "jobs_report_security_platform_leadership.html"
+
+# Job Titles / Roles to scan (English & Hebrew senior leadership roles)
+jobs:
+  # Platform / DevOps / SRE leadership
+  - "Head of DevOps"
+  - "Director of DevOps"
+  - "DevOps Manager"
+  - "Platform Manager"
+  - "Director of Platform"
+  - "Head of Platform"
+  - "Head of Platform Engineering"
+  - "Director of Platform Engineering"
+  - "Head of Infrastructure"
+  - "Director of Infrastructure"
+  - "SRE Manager"
+  - "Head of SRE"
+  - "Director of SRE"
+  - "Head of Site Reliability"
+  - "Director of Site Reliability"
+  - "Cloud Infrastructure Manager"
+  - "Head of Cloud"
+  - "VP Infrastructure"
+  - "VP Engineering Infrastructure"
+
+  # Security leadership
+  - "CISO"
+  - "Chief Information Security Officer"
+  - "VP Information Security"
+  - "VP InfoSec"
+  - "Director of Security"
+  - "Director of Information Security"
+  - "Head of Security"
+  - "Head of Information Security"
+  - "Director of Application Security"
+  - "Head of Application Security"
+  - "Director of Product Security"
+  - "Head of Product Security"
+  - "DevSecOps Manager"
+  - "DevSecOps Director"
+  - "Head of DevSecOps"
+  - "Director of AI Security"
+  - "Head of AI Security"
+
+  # IT / executive scope under other titles
+  - "CIO"
+  - "Chief Information Officer"
+  - "CTO"
+  - "Chief Technology Officer"
+  - "Head of MIS"
+  - "Head of IT"
+  - "Director of IT"
+  - "VP R&D"
+
+  # Senior product management in cyber / AI security
+  - "Principal Product Manager Security"
+  - "Senior Product Manager Security"
+  - "Director of Product Security"
+  - "Group Product Manager Security"
+  - "Principal Product Manager AI"
+  - "Senior Product Manager AI Security"
+  - "AI Product Lead"
+
+  # Consulting / freelance (report-only; see header notes)
+  - "vCISO"
+  - "Virtual CISO"
+  - "CISO as a Service"
+  - "Security Consultant"
+  - "AI Security Consultant"
+  - "Cybersecurity Advisor"
+  - "Fractional CISO"
+
+  # Hebrew titles
+  - "מנהל DevOps"
+  - "ראש צוות DevOps"
+  - "מנהל תשתיות"
+  - "מנהל סייבר"
+  - "מנהל אבטחת מידע"
+  - "מנהל אבטחת מידע ראשי"
+  - "סמנכ\"ל אבטחת מידע"
+  - "מנהל מערכות מידע"
+  - "מנהל IT"
+
+# Target Locations: Israel + Remote.
+# "Remote" does not by itself confirm the role can be done from Israel;
+# Israel and abroad results must still be reviewed and reported separately.
+locations:
+  - "Israel"
+  - "Remote"
+
+# Search terms for scanning/matching postings (English & Hebrew).
+# These are NOT statements about the user's skills, experience or CV.
+keywords:
+  # Leadership & Strategy
+  - "Security strategy"
+  - "Platform strategy"
+  - "Infrastructure roadmap"
+  - "Team leadership"
+  - "Building and scaling teams"
+  - "Hiring and mentoring"
+  - "Cross-functional collaboration"
+  - "Stakeholder management"
+  - "Budget management"
+  - "Vendor management"
+  - "Process improvement"
+  - "Organizational transformation"
+  - "Executive reporting"
+  - "Board reporting"
+  - "Risk management"
+
+  # DevOps / Platform / SRE
+  - "DevOps"
+  - "Platform engineering"
+  - "Site Reliability Engineering"
+  - "SRE"
+  - "CI/CD"
+  - "Continuous integration"
+  - "Continuous delivery"
+  - "Infrastructure as Code"
+  - "IaC"
+  - "Terraform"
+  - "Kubernetes"
+  - "K8s"
+  - "Docker"
+  - "Containers"
+  - "AWS"
+  - "GCP"
+  - "Azure"
+  - "Cloud infrastructure"
+  - "GitOps"
+  - "ArgoCD"
+  - "Jenkins"
+  - "GitHub Actions"
+  - "GitLab CI"
+  - "Observability"
+  - "Monitoring"
+  - "Prometheus"
+  - "Grafana"
+  - "Incident management"
+  - "On-call"
+  - "PagerDuty"
+  - "Production reliability"
+  - "Release management"
+  - "MTTR"
+  - "FinOps"
+  - "Cost optimization"
+
+  # Security
+  - "Information security"
+  - "Application security"
+  - "Product security"
+  - "Cloud security"
+  - "DevSecOps"
+  - "AI security"
+  - "LLM security"
+  - "Threat modeling"
+  - "Vulnerability management"
+  - "Security posture"
+  - "SOC 2"
+  - "ISO 27001"
+  - "Compliance"
+  - "Security compliance"
+  - "Incident response"
+  - "Security architecture"
+  - "Zero trust"
+  - "IAM"
+  - "SIEM"
+
+  # AI / modern engineering
+  - "AI agents"
+  - "LLM"
+  - "Generative AI"
+  - "AI infrastructure"
+  - "ML pipelines"
+  - "MLOps"
+
+  # Product management (cyber / AI security)
+  - "Product strategy"
+  - "Product roadmap"
+  - "Go-to-market"
+  - "B2B SaaS"
+  - "Developer experience"
+
+  # Process & Work Models
+  - "Agile"
+  - "Scrum"
+  - "SDLC"
+  - "Remote"
+  - "Hybrid"
+  - "Work from anywhere"
+
+# Preferred Target Industries
+industries:
+  - "Cybersecurity"
+  - "AI"
+  - "Artificial Intelligence"
+  - "SaaS"
+  - "Software"
+  - "High Tech"
+  - "Cloud"
+  - "Fintech"
+  - "Payments"
+  - "Quantum"
+  - "Defense Tech"
+  - "Developer Tools"
+
+# Exclusion criteria.
+# Keyword matching cannot classify employers or read nuance, so these
+# criteria are documented here as MANUAL review checks, not as broad
+# structured tokens that could misfire on leadership postings:
+# - Junior / student / entry-level roles are out of scope (single words
+#   like "junior" or "student" can also appear inside leadership JDs,
+#   e.g. "mentor junior engineers" - judge by the actual role).
+# - Recruiter / talent-agency reposts are out of scope.
+# - Sector exclusions: government bodies and large Israeli banks.
+#   NOT excluded: fintech/payments companies and vendors whose clients
+#   are banks or government (those remain in scope).
+exclude:
+  # Phrase-level exclusions (specific enough to avoid false hits)
+  - "Unpaid internship"
+  - "Internship"
+  - "Entry level"
+  - "Graduate program"
+  - "Mechanical Engineer"
+  - "Civil Engineer"
+  - "Hardware Engineer"
+  - "Talent Acquisition"
+  - "Account Executive"
+  - "Sales Manager"
+  - "Scrum Master"
+
+  # Language (postings must work in English or Hebrew)
+  - "German required"
+  - "German speaker"
+  - "Deutsch"

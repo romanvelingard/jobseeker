@@ -80,13 +80,30 @@ def calculate_rule_score(job: dict, job_config: dict) -> float:
             break
 
     if not role_matched:
+        def has_term(text: str, terms: list[str]) -> bool:
+            for term in terms:
+                if len(term) <= 4:
+                    if re.search(r'\b' + re.escape(term) + r'\b', text):
+                        return True
+                elif term in text:
+                    return True
+            return False
+
         qa_terms = ["qa", "quality", "test", "testing", "automation", "validation", "v&v", "איכות", "בדיקות", "אוטומציה"]
         proc_terms = ["buyer", "purchasing", "procurement", "sourcing", "supply chain", "vendor", "supplier", "קניין", "רכש", "zakupów", "kupiec", "закупівель", "постачання"]
+        sec_platform_terms = [
+            "ciso", "vciso", "infosec", "security", "cyber", "cybersecurity", "devsecops",
+            "devops", "sre", "site reliability", "platform", "infrastructure", "cloud",
+            "cio", "cto", "mis", "it", "r&d", "ai", "אבטחת מידע", "סייבר", "תשתיות", "מערכות מידע"
+        ]
         target_text = " ".join(target_titles)
-        is_qa = any(k in target_text for k in qa_terms)
-        is_proc = any(k in target_text for k in proc_terms)
+        is_qa = has_term(target_text, qa_terms)
+        is_proc = has_term(target_text, proc_terms)
+        is_sec_platform = has_term(target_text, sec_platform_terms)
 
-        if is_qa:
+        if is_sec_platform and not is_qa:
+            active_terms = sec_platform_terms
+        elif is_qa:
             active_terms = qa_terms
         elif is_proc:
             active_terms = proc_terms
@@ -99,14 +116,7 @@ def calculate_rule_score(job: dict, job_config: dict) -> float:
                 if w.strip().lower() not in generic_words and len(w.strip()) >= 3
             })
 
-        for term in active_terms:
-            if len(term) <= 3:
-                if re.search(r'\b' + re.escape(term) + r'\b', title):
-                    role_matched = True
-                    break
-            elif term in title:
-                role_matched = True
-                break
+        role_matched = has_term(title, active_terms)
 
     if role_matched:
         score += 30.0

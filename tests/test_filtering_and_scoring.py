@@ -13,6 +13,8 @@ class TestJobFilteringAndScoring(unittest.TestCase):
             cls.qa_config = yaml.safe_load(f)
         with open("profiles/procurement.yaml", "r", encoding="utf-8") as f:
             cls.proc_config = yaml.safe_load(f)
+        with open("profiles/shukic.yaml", "r", encoding="utf-8") as f:
+            cls.shukic_config = yaml.safe_load(f)
 
     def test_qa_director_offending_titles_rejected(self):
         offending_titles = [
@@ -97,6 +99,11 @@ class TestJobFilteringAndScoring(unittest.TestCase):
         proc_job = {"title": "Senior Buyer", "country": "Israel", "desc": "Defense supplier management"}
         proc_score = calculate_rule_score(proc_job, self.proc_config)
         self.assertGreaterEqual(proc_score, 80.0, "Senior Buyer position in Israel should get high rule score")
+
+        sec_job = {"title": "Head of DevOps & Cloud Infrastructure", "country": "Israel", "desc": "Cybersecurity SaaS platform"}
+        self.assertTrue(is_valid_role_title(sec_job["title"], self.shukic_config))
+        sec_score = calculate_rule_score(sec_job, self.shukic_config)
+        self.assertGreaterEqual(sec_score, 80.0, "Security/Platform leadership position in Israel should get high rule score")
 
     def test_extract_skills_summary_never_returns_none(self):
         from scorer import extract_skills_summary
