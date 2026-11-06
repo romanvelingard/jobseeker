@@ -8,7 +8,7 @@ scraper:
     - "indeed"
     - "zip_recruiter"
   hours_old: 24
-  results_wanted: 10
+  results_wanted: 20
   results_wanted_by_location:
     USA: 10
   delay_seconds: 2.0           # Seconds to wait between search queries to prevent 429 blocks
