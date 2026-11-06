@@ -75,7 +75,11 @@ def calculate_rule_score(job: dict, job_config: dict) -> float:
 
     role_matched = False
     for jt in target_titles:
-        if jt in title or title in jt:
+        if len(jt) <= 4:
+            if re.search(r'\b' + re.escape(jt) + r'\b', title):
+                role_matched = True
+                break
+        elif jt in title or (len(title) >= 5 and title in jt):
             role_matched = True
             break
 

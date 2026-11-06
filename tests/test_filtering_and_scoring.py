@@ -105,6 +105,10 @@ class TestJobFilteringAndScoring(unittest.TestCase):
         sec_score = calculate_rule_score(sec_job, self.shukic_config)
         self.assertGreaterEqual(sec_score, 80.0, "Security/Platform leadership position in Israel should get high rule score")
 
+        # Short target titles like 'CTO' must not substring-match inside unrelated words like 'Instructor' or 'Director'
+        self.assertFalse(is_valid_role_title("Chef Instructor", self.shukic_config))
+        self.assertFalse(is_valid_role_title("Director of Testing", self.shukic_config))
+
     def test_extract_skills_summary_never_returns_none(self):
         from scorer import extract_skills_summary
 

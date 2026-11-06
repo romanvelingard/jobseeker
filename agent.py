@@ -820,7 +820,10 @@ def is_valid_role_title(title: str, job_config: dict) -> bool:
             target_titles.append(str(jt).lower())
 
     for jt in target_titles:
-        if jt in t_lower or t_lower in jt:
+        if len(jt) <= 4:
+            if re.search(r'\b' + re.escape(jt) + r'\b', t_lower):
+                return True
+        elif jt in t_lower or (len(t_lower) >= 5 and t_lower in jt):
             return True
 
     # 2. Detect profile domain type from target_titles using word-boundary checks

@@ -19,10 +19,11 @@ scraper:
   # Proxies: list of proxy URLs, or set via SCRAPER_PROXIES in .env
   # Format: "http://user:password@host:port" or "socks5://user:password@host:port"
   proxies:
-    - "http://18.221.175.172:8000"
-    - "http://171.245.71.144:2037"
-    - "http://85.121.149.232:18080"
+    - "http://38.9.97.67:8080"
+    - "http://45.194.3.132:8080"
+    - "http://194.55.234.58:8080"
     - "http://34.43.46.91:443"
+    - "http://209.38.24.108:3128"
 
 
 
