@@ -2,7 +2,7 @@ name: Run Daily LinkedIn Job Agent
 
 on:
   schedule:
-    - cron: '5 5 * * *'
+    - cron: '5 3 * * *'
   workflow_dispatch:
     inputs:
       profile:
